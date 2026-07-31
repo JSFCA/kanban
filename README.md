@@ -33,4 +33,4 @@ cd frontend && npm run test:all   # frontend, vitest and playwright
 
 - [CLAUDE.md](CLAUDE.md) — requirements, technical decisions, standards
 - [docs/PLAN.md](docs/PLAN.md) — the ten-part build plan
-- [backend/AGENTS.md](backend/AGENTS.md), [frontend/CLAUDE.md](frontend/CLAUDE.md), [scripts/AGENTS.md](scripts/AGENTS.md)
+- [backend/CLAUDE.md](backend/CLAUDE.md), [frontend/CLAUDE.md](frontend/CLAUDE.md), [scripts/CLAUDE.md](scripts/CLAUDE.md)
