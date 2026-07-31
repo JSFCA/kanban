@@ -1,8 +1,11 @@
-# Part 2 explained
+# Build walkthrough
 
-A walkthrough of what the scaffolding does and why, assuming no Docker or backend background.
+What each part of the build does and why, assuming no Docker or backend background. One section per part
+of [PLAN.md](PLAN.md).
 
-## What we built
+## Part 2: scaffolding
+
+### What we built
 
 One web server, running inside one container, doing two jobs:
 
@@ -22,7 +25,7 @@ Visiting `/` gets an HTML page. That page then asks `/api/health` for JSON and d
 round trip is the whole point of Part 2: it proves the frontend and the API are wired together and reachable
 from your browser.
 
-## Docker in ninety seconds
+### Docker in ninety seconds
 
 The problem Docker solves: "it works on my machine". Your Mac has Python 3.9; the app wants 3.13. Someone
 else has neither.
@@ -44,7 +47,7 @@ cached result. This is why the file is ordered the way it is: dependencies (slow
 installed *before* your source code (fast, changes constantly). Edit `main.py` and the rebuild skips
 straight past the dependency install.
 
-## Our Dockerfile, line by line
+### Our Dockerfile, line by line
 
 ```dockerfile
 FROM node:22-bookworm-slim AS static-build
@@ -108,7 +111,7 @@ There is also a [.dockerignore](../.dockerignore), which is `.gitignore` for Doc
 `node_modules`, `.git` and `.env` out of the image — faster builds, and secrets never land in an image
 someone could inspect.
 
-## Why uv, and what a lockfile is for
+### Why uv, and what a lockfile is for
 
 `uv` is a fast Python package manager — same job as `pip`, considerably quicker. It gives us two files:
 
@@ -123,7 +126,7 @@ shipped. The lockfile is committed to git for this reason.
 Everything lands in a **virtual environment** at `/app/.venv` — a private folder of packages, so this
 project's dependencies can't collide with another's.
 
-## The backend
+### The backend
 
 All of [backend/app/main.py](../backend/app/main.py):
 
@@ -156,7 +159,7 @@ API route gets looked up as a file in `static/`. `html=True` makes a request for
    means "start from `main.py`, go up two levels". Had we written `"static"`, it would resolve relative to
    whatever directory the server happened to be launched from — working in the container, breaking in tests.
 
-## The tests
+### The tests
 
 [backend/tests/test_health.py](../backend/tests/test_health.py) uses FastAPI's `TestClient`:
 
@@ -177,7 +180,7 @@ Three tests: health returns the right JSON, `/` serves the HTML page, and an unk
 404. The third guards subtlety 1 above — proof that the catch-all mount isn't quietly swallowing bad API
 paths and returning the HTML page instead.
 
-### Why the tests were written first
+#### Why the tests were written first
 
 We wrote each test, **ran it, and watched it fail** before writing the code to make it pass. The first run
 gave `ModuleNotFoundError`, the second gave two clean `assert 404 == 200` failures, and only then did
@@ -187,7 +190,7 @@ This feels like a detour and isn't. A test written after the code passes on the 
 has never failed has never proved it can detect anything. Watching it fail for the *expected* reason is what
 establishes that it is actually testing the thing you think it is.
 
-## The scripts
+### The scripts
 
 Three jobs, in `.sh` (Mac/Linux) and `.ps1` (Windows) — same behaviour either way.
 
@@ -211,7 +214,7 @@ the first version cheerfully reported "Stopped" when nothing was running.
 the container reads your real files rather than a copy baked into an image, edits take effect immediately
 with no rebuild. This is why you don't need Python or `uv` installed to run the tests.
 
-## Secrets
+### Secrets
 
 `OPENROUTER_API_KEY` lives in `.env` at the project root, which is in both `.gitignore` and `.dockerignore`.
 `start` passes it with `--env-file`, which injects it into the container's environment **at run time**.
@@ -221,7 +224,7 @@ by anyone who gets a copy, even if a later step deletes it, because every layer 
 injection means the key exists only in the running container's memory. Same reason the key never reached
 GitHub when we pushed.
 
-## Command cheat sheet
+### Command cheat sheet
 
 ```
 scripts/start.sh              build and run
@@ -236,8 +239,213 @@ docker exec -it kanban-studio bash    open a shell inside the container
 docker images                 images on disk
 ```
 
-## What Part 3 changes
+## Part 3: the real frontend
 
-The `static-build` stage stops copying the placeholder and starts running `npm run build`, producing the real
-Kanban board. Everything else — the runtime stage, the mount, the scripts — stays as it is. That was the
-point of building it this way.
+### What changed
+
+The placeholder page is gone. `/` now serves the actual Kanban board, and cards became editable.
+
+What did **not** change is the interesting part: same container, same FastAPI server, same mount, same
+scripts. Only the contents of `static/` are different. That was the point of the Part 2 structure.
+
+```
+Part 2:  static/  =  one hand-written index.html
+Part 3:  static/  =  the compiled Next.js app
+```
+
+### Static export: what "static" means
+
+A React app can be served two ways. Either a Node.js server runs continuously, building each page on
+request — that's what `npm run dev` does — or you compile the whole thing once, up front, into plain files
+and serve those.
+
+We do the second, by setting one line in [next.config.ts](../frontend/next.config.ts):
+
+```ts
+const nextConfig: NextConfig = {
+  output: "export",
+};
+```
+
+Now `npm run build` writes a folder called `out/` containing `index.html`, a `_next/` folder of JavaScript
+and CSS, and nothing else. No server. Any web server that can hand over files can serve it — including the
+`StaticFiles` mount we already had.
+
+The app is still fully interactive once it loads. Drag and drop, editing, adding cards all run as
+JavaScript **in your browser**. "Static" describes how the files are delivered, not how the app behaves.
+
+The tradeoff: nothing can be computed per-request on the server. For this app that costs nothing, because
+anything dynamic goes through `/api` anyway.
+
+### Where the multi-stage build finally pays off
+
+In Part 2 the node stage was a placeholder that just carried a file. Now it does real work:
+
+```dockerfile
+FROM node:22-bookworm-slim AS static-build
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+```
+
+then, in the Python stage:
+
+```dockerfile
+COPY --from=static-build /build/out ./static
+```
+
+That last line copies **only** `out/`. Node.js, `npm`, and the 496 MB of `node_modules` needed to compile
+the app stay behind in the discarded first stage. The shipped image contains Python, FastAPI, and some
+HTML — around 400 MB, nearly all of it the Debian and Python base layers rather than anything we added.
+Build tools are needed to *make* the thing, not to *run* it, and multi-stage builds are how you express
+that difference.
+
+Note `npm ci` runs before the source is copied, for the same caching reason as Part 2: edit a component and
+Docker reuses the cached dependency install instead of redownloading everything.
+
+### The bug this caused, and the pattern that fixed it
+
+Moving the built site into the image broke every backend test. Worth understanding, because the failure
+mode is common and the error message points somewhere unhelpful.
+
+`backend/static/` used to exist in the repo. Now it exists *only inside the image*. So on your Mac, this
+line had nothing to point at:
+
+```python
+app.mount("/", StaticFiles(directory=STATIC_DIR, html=True))
+```
+
+Python executes code as it imports a file, top to bottom. `StaticFiles` checks the directory at
+construction and raises immediately if it's missing. That happens while pytest is still **collecting**
+tests — the phase where it imports every test file to discover what to run. So the crash landed before a
+single test executed, and all five failed at once:
+
+```
+RuntimeError: Directory '/app/static' does not exist
+```
+
+Two changes fixed it. First, `check_dir=False`, telling `StaticFiles` not to verify up front; a request for
+a missing file simply 404s. Second, and more useful, an **app factory**:
+
+```python
+def create_app(static_dir: Path = STATIC_DIR) -> FastAPI:
+    app = FastAPI(title="Kanban Studio")
+    ...
+    return app
+
+app = create_app()
+```
+
+Instead of one app object created at import, there's a function that builds one on demand. Production calls
+it once with the default. Tests call it with a directory they control. The general lesson: when something
+is hard to test, the usual cause is that it's hard-wired at construction, and the usual fix is to pass it
+in.
+
+### How the backend tests use that
+
+```python
+@pytest.fixture
+def client(tmp_path):
+    (tmp_path / "index.html").write_text("<h1>Kanban Studio</h1>")
+    ...
+    return TestClient(create_app(tmp_path))
+
+
+def test_root_serves_the_built_index(client):
+    assert "Kanban Studio" in client.get("/").text
+```
+
+A **fixture** is pytest's setup mechanism. Name a fixture as a function parameter and pytest runs it first
+and passes the result in. `tmp_path` is built in: a fresh empty directory per test, deleted afterwards.
+
+So each test builds a miniature fake "build output" and asserts the server serves it. The tests never
+depend on anyone having run `npm run build`, which is what makes them fast and reliable. There is also a
+test that a *missing* directory still leaves `/api/health` working — a regression guard for the exact bug
+above.
+
+### Editing a card: the draft pattern
+
+Click a title, it becomes a text box. This is the standard React shape for editable text:
+
+```tsx
+const [editing, setEditing] = useState<"title" | "details" | null>(null);
+const [draft, setDraft] = useState("");
+```
+
+`editing` records which field is open, `draft` holds what you've typed **so far**. Crucially, typing does
+not touch the real card. The card only changes when you commit — Enter or clicking away. Press Escape and
+we throw the draft away and the original is untouched.
+
+That separation is the whole reason a "cancel" is possible. If keystrokes wrote straight to the card, there
+would be nothing left to restore.
+
+Details is a `<textarea>` rather than an `<input>`, so Enter has to insert a newline instead of committing;
+that field commits on blur only. A title emptied to whitespace is discarded rather than saved, since a card
+with no title is unusable.
+
+### The drag-and-drop conflict
+
+The whole card is the drag handle — the drag library's event handlers are attached to the card element:
+
+```tsx
+{...attributes}
+{...(editing ? {} : listeners)}
+```
+
+Drag libraries work by capturing pointer events and calling `preventDefault()` to stop the browser doing
+its normal thing, like selecting text. That is exactly what you need for dragging and exactly what breaks a
+text box: clicks never focus it, and you cannot select a word.
+
+The fix is that second line. When `editing` is set, the drag listeners are simply not attached, so the
+field behaves like a normal field. Release the field and dragging comes back.
+
+**This class of bug is invisible to unit tests.** They run in jsdom, a fake browser with no real pointer
+handling and no layout, so the conflict cannot occur there. Only a real browser shows it, which is why the
+end-to-end test asserts the field actually received focus:
+
+```ts
+await card.getByText("Align roadmap themes").click();
+await expect(input).toBeFocused();
+```
+
+Without that line the test would pass whether or not the feature works.
+
+### The end-to-end tests now test the real thing
+
+Previously Playwright started `next dev` — a development server that never runs in production — and tested
+that. Now it tests the container:
+
+```ts
+use: { baseURL: "http://localhost:8000" },
+webServer: {
+  command: "../scripts/start.sh",
+  url: "http://localhost:8000/api/health",
+  reuseExistingServer: true,
+},
+```
+
+Playwright runs `start.sh` itself, waits for the health endpoint, then drives a real Chrome against the
+compiled app served by FastAPI. So the tests now exercise the artifact you actually ship, not a
+development-mode approximation of it.
+
+The catch is `reuseExistingServer: true`: if a container is already running it is reused, even if it was
+built from older code. Run `scripts/stop.sh` first when you need certainty.
+
+### Test counts after Part 3
+
+```
+5   backend            pytest, in the uv container
+16  frontend unit      vitest, in jsdom
+4   end to end         playwright, against the container
+```
+
+Each was written before the code that satisfies it, and each was watched failing first. The three failures
+looked like `updateCard is not a function`, then `Unable to find a label with the text of: Card title`,
+then the `RuntimeError` above — each one naming the thing that did not exist yet.
+
+### What Part 4 changes
+
+Hitting `/` will require logging in. FastAPI gains `/api/login`, `/api/logout` and `/api/me`, and sets a
+session cookie the browser sends back on every later request. The board renders only once that check
+passes.
