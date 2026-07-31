@@ -77,13 +77,14 @@ page with a live health result; `scripts/stop.sh` stops and removes it; `pytest`
 
 **Goal.** The real Kanban board, statically built and served by FastAPI at `/`, with card editing added.
 
-- [ ] Set `output: "export"` in `frontend/next.config.ts`
-- [ ] Dockerfile node stage runs `npm ci && npm run build`; copy `frontend/out` into the runtime stage
-- [ ] FastAPI serves that directory at `/`, with `/api` routes taking precedence
-- [ ] Add card editing: click a card's title or details to edit in place, commit on blur or Enter, cancel on Escape
-- [ ] Add `updateCard(board, cardId, fields)` to `frontend/src/lib/kanban.ts` and a `handleUpdateCard` in `KanbanBoard.tsx`
-- [ ] Repoint `playwright.config.ts` `baseURL` and `webServer` at the container
-- [ ] Delete the stray `frontend/test-results/` directory and confirm it is gitignored
+- [x] Set `output: "export"` in `frontend/next.config.ts`
+- [x] Dockerfile node stage runs `npm ci && npm run build`; copy `frontend/out` into the runtime stage
+- [x] FastAPI serves that directory at `/`, with `/api` routes taking precedence
+- [x] Add card editing: click a card's title or details to edit in place, commit on blur or Enter, cancel on Escape
+- [x] Add `updateCard(cards, cardId, fields)` to `frontend/src/lib/kanban.ts` and a `handleUpdateCard` in `KanbanBoard.tsx`
+- [x] Refactor the backend to a `create_app(static_dir)` factory so tests do not depend on build output
+- [x] Repoint `playwright.config.ts` `baseURL` and `webServer` at the container
+- [x] Delete the stray `frontend/test-results/` directory and confirm it is gitignored
 
 **Tests.**
 - Unit (vitest): `updateCard` pure-function cases; editing a card title and details through `KanbanBoard`; existing rename/add/delete/`moveCard` tests still pass

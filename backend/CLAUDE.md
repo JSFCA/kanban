@@ -6,20 +6,27 @@ the app only ever runs inside the container.
 ## Layout
 
 ```
-app/main.py       FastAPI app, routes, static mount
-static/           the site served at / (placeholder now; the Next.js build lands here in Part 3)
+app/main.py       create_app factory: routes, static mount
 tests/            pytest suites
 pyproject.toml    dependencies and pytest config
 uv.lock           pinned versions, committed
 ```
 
+There is no `static/` directory in the repository. Docker builds the Next.js export and copies it to
+`/app/static` inside the image, so it exists at run time but never in a host checkout.
+
 ## Conventions
 
 - API routes live under `/api` and must be registered **before** the `StaticFiles` mount at `/`, which is a
   catch-all. Anything registered after it is unreachable.
+- Add routes inside `create_app`, above the `app.mount` call.
+- `StaticFiles` uses `check_dir=False`. Without it, importing `app.main` on a host checkout raises
+  `RuntimeError: Directory '/app/static' does not exist` and every test fails at collection.
 - `STATIC_DIR` resolves relative to `app/main.py`, not the working directory, so tests and the container
   agree.
-- Tests import `from app.main import app`; `pythonpath = ["."]` in `pyproject.toml` makes that work.
+- Tests call `create_app(tmp_path)` with a fixture directory rather than importing the module-level `app`,
+  which keeps static-serving assertions hermetic. `pythonpath = ["."]` in `pyproject.toml` makes the import
+  work.
 - `httpx2` is the dev dependency, not `httpx` — Starlette's `TestClient` deprecates the latter.
 
 ## Running
