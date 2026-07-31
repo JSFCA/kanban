@@ -161,6 +161,18 @@ export const moveCard = (
   });
 };
 
+export const updateCard = (
+  cards: Record<string, Card>,
+  cardId: string,
+  fields: Partial<Pick<Card, "title" | "details">>
+): Record<string, Card> => {
+  const card = cards[cardId];
+  if (!card) {
+    return cards;
+  }
+  return { ...cards, [cardId]: { ...card, ...fields } };
+};
+
 export const createId = (prefix: string) => {
   const randomPart = Math.random().toString(36).slice(2, 8);
   const timePart = Date.now().toString(36);

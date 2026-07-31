@@ -1,7 +1,8 @@
 # Frontend
 
-A Next.js demo of the Kanban board. Frontend-only: all state is in React, nothing is persisted, there is no
-auth and no backend. Parts 3, 4, 7 and 10 of [../docs/PLAN.md](../docs/PLAN.md) change that.
+The Kanban board UI. Statically exported and served by FastAPI at `/`. All state is still in React —
+nothing is persisted and there is no auth yet. Parts 4, 7 and 10 of [../docs/PLAN.md](../docs/PLAN.md)
+change that.
 
 ## Stack
 
@@ -38,9 +39,11 @@ Cards are stored flat in `cards` and referenced by id from `column.cardIds` — 
 and eight cards.
 
 `moveCard(columns, activeId, overId)` is a pure function covering reorder-within-column, move-to-another-
-column, and drop-on-empty-column (when `overId` is a column id). It is directly unit tested in
-[src/lib/kanban.test.ts](src/lib/kanban.test.ts). Keep it pure and keep it as the seam — backend
-integration should call it and send the result, not reimplement the ordering logic.
+column, and drop-on-empty-column (when `overId` is a column id). `updateCard(cards, cardId, fields)` is the
+same idea for card content: it patches title and/or details, returns the input untouched for an unknown id,
+and never mutates. Both are directly unit tested in [src/lib/kanban.test.ts](src/lib/kanban.test.ts). Keep
+them pure and keep them as the seam — backend integration should call them and send the result, not
+reimplement the logic.
 
 `createId(prefix)` returns `prefix-<random><timestamp>`, base36. Once the backend owns ids, this is the
 thing to replace.
@@ -57,11 +60,23 @@ The four mutation points, all in `KanbanBoard.tsx`:
 |---|---|
 | `handleRenameColumn` | column title input in `KanbanColumn` |
 | `handleAddCard` | `NewCardForm` submit |
+| `handleUpdateCard` | inline edit on `KanbanCard`, delegates to `updateCard` |
 | `handleDeleteCard` | Remove button on `KanbanCard` |
 | `handleDragEnd` | dnd-kit, delegates to `moveCard` |
 
-These are the functions that become API calls in Part 7. There is no card-edit handler yet — Part 3 adds
-one.
+These are the functions that become API calls in Part 7.
+
+## Inline card editing
+
+Click a card's title or details to edit it. `KanbanCard` holds the `editing` field and a `draft` string.
+Title commits on Enter or blur; details is a textarea, so Enter inserts a newline and only blur commits.
+Escape cancels either. A title cleared to whitespace is discarded rather than saved, which would leave the
+card unlabelled.
+
+**The card is its own drag handle** — `attributes` and `listeners` are spread on the `<article>`. Drag
+listeners are therefore withheld while `editing` is set, otherwise dnd-kit swallows pointer events and the
+fields cannot be focused or selected. jsdom cannot detect this; the Playwright test asserts `toBeFocused()`
+after the click, which is what actually guards it.
 
 ## Drag and drop
 
@@ -103,14 +118,21 @@ npm run test:all    # both
 vitest runs in jsdom with globals enabled (`describe`/`it`/`expect` need no import) and explicitly excludes
 `tests/` so Playwright specs are not picked up.
 
-[playwright.config.ts](playwright.config.ts) currently boots `next dev` on `127.0.0.1:3000` via `webServer`
-and uses that as `baseURL`. Part 2/3 must repoint both at the FastAPI container.
+[playwright.config.ts](playwright.config.ts) runs against the **container**, not `next dev`: `webServer`
+invokes `../scripts/start.sh` and waits on `/api/health`, with `baseURL` at `http://localhost:8000`. So e2e
+tests exercise the real static export served by FastAPI. A cold run pays for a Docker build;
+`reuseExistingServer` keeps warm runs fast, which also means a stale container is reused silently — run
+`scripts/stop.sh` first if you need certainty.
+
+## Build
+
+`output: "export"` in [next.config.ts](next.config.ts) makes `npm run build` emit a static bundle to `out/`.
+The Dockerfile's node stage runs that build and copies `out/` to `/app/static` in the runtime image. No
+Node.js ships to production, and `out/` is gitignored — the build output never exists in the repo.
 
 ## Known gaps
 
-- No card editing — cards can be added, deleted and moved, but title/details cannot be changed (Part 3)
 - No persistence; a refresh resets to `initialData` (Parts 6-7)
 - No auth (Part 4)
 - No AI sidebar (Part 10)
-- [next.config.ts](next.config.ts) is empty; static serving needs `output: "export"` (Part 3)
 - Column rename fires on every keystroke, so it will need debouncing or blur-commit once it writes to the API

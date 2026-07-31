@@ -16,6 +16,20 @@ test("adds a card to a column", async ({ page }) => {
   await expect(firstColumn.getByText("Playwright card")).toBeVisible();
 });
 
+test("edits a card title in place", async ({ page }) => {
+  await page.goto("/");
+  const card = page.getByTestId("card-card-1");
+
+  await card.getByText("Align roadmap themes").click();
+  const input = card.getByLabel("Card title");
+  await expect(input).toBeFocused();
+  await input.fill("Edited in the browser");
+  await input.press("Enter");
+
+  await expect(card.getByText("Edited in the browser")).toBeVisible();
+  await expect(card.getByLabel("Card title")).toBeHidden();
+});
+
 test("moves a card between columns", async ({ page }) => {
   await page.goto("/");
   const card = page.getByTestId("card-card-1");

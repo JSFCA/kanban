@@ -13,7 +13,14 @@ import {
 } from "@dnd-kit/core";
 import { KanbanColumn } from "@/components/KanbanColumn";
 import { KanbanCardPreview } from "@/components/KanbanCardPreview";
-import { createId, initialData, moveCard, type BoardData } from "@/lib/kanban";
+import {
+  createId,
+  initialData,
+  moveCard,
+  updateCard,
+  type BoardData,
+  type Card,
+} from "@/lib/kanban";
 
 export const KanbanBoard = () => {
   const [board, setBoard] = useState<BoardData>(() => initialData);
@@ -67,6 +74,13 @@ export const KanbanBoard = () => {
           ? { ...column, cardIds: [...column.cardIds, id] }
           : column
       ),
+    }));
+  };
+
+  const handleUpdateCard = (cardId: string, fields: Partial<Card>) => {
+    setBoard((prev) => ({
+      ...prev,
+      cards: updateCard(prev.cards, cardId, fields),
     }));
   };
 
@@ -147,6 +161,7 @@ export const KanbanBoard = () => {
                 cards={column.cardIds.map((cardId) => board.cards[cardId])}
                 onRename={handleRenameColumn}
                 onAddCard={handleAddCard}
+                onUpdateCard={handleUpdateCard}
                 onDeleteCard={handleDeleteCard}
               />
             ))}
