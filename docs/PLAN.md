@@ -62,7 +62,7 @@ API call, started and stopped by scripts.
 - [x] Container reads `OPENROUTER_API_KEY` from the project-root `.env` at run time (not baked into the image)
 - [x] `scripts/start.sh` and `scripts/stop.sh` (Mac/Linux), `scripts/start.ps1` and `scripts/stop.ps1` (Windows)
 - [x] `scripts/test.sh` and `scripts/test.ps1` — pytest inside the uv image, since the host has no `uv`
-- [x] Replace the `backend/` and `scripts/` `AGENTS.md` stubs with real `CLAUDE.md` descriptions
+- [x] Replace the `backend/` and `scripts/` documentation stubs with real `CLAUDE.md` descriptions
 - [x] Root `README.md`, minimal: how to start, stop, and run tests
 
 **Tests.** `backend/tests/test_health.py` — `/api/health` returns 200 and the expected body; `/` returns the
