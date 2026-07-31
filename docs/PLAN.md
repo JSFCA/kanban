@@ -1,37 +1,237 @@
-# High level steps for project
+# Implementation plan
 
-Part 1: Plan
+Ten parts, executed in order. Each part is finished only when its checklist is complete, its tests pass,
+and the running app has been exercised by hand. Do not start a part before the previous one is signed off.
 
-Enrich this document to plan out each of these parts in detail, with substeps listed out as a checklist to be checked off by the agent, and with tests and success critieria for each. Also create an AGENTS.md file inside the frontend directory that describes the existing code there. Ensure the user checks and approves the plan.
+See [../CLAUDE.md](../CLAUDE.md) for requirements and standards, and
+[../frontend/CLAUDE.md](../frontend/CLAUDE.md) for the existing frontend.
 
-Part 2: Scaffolding
+## Decisions
 
-Set up the Docker infrastructure, the backend in backend/ with FastAPI, and write the start and stop scripts in the scripts/ directory. This should serve example static HTML to confirm that a 'hello world' example works running locally and also make an API call.
+**Auth.** FastAPI validates the hardcoded credentials and sets an HttpOnly session cookie. API routes reject
+unauthenticated calls. The frontend gates the board on `GET /api/me`. No JWT, no client-only gate — the
+session user is what scopes board data in Parts 6-7.
 
-Part 3: Add in Frontend
+**Card editing.** CLAUDE.md requires editable cards; the frontend has no such feature. It is added in
+Part 3, so the feature set is complete before persistence and AI-driven edits build on it.
 
-Now update so that the frontend is statically built and served, so that the app has the demo Kanban board displayed at /. Comprehensive unit and integration tests.
+**Docker.** One container, production-style. Multi-stage build: a node stage runs `next build` producing a
+static export, a `uv` stage runs FastAPI serving that output at `/` and the API under `/api`. No compose,
+no separate dev mode.
 
-Part 4: Add in a fake user sign in experience
+**AI output shape.** OpenRouter reports that `nvidia/nemotron-3-ultra-550b-a55b:free` does **not** support
+`structured_outputs` / `response_format`; its `supported_parameters` are `include_reasoning, max_tokens,
+reasoning, reasoning_effort, seed, temperature, tool_choice, tools, top_p`. Only the paid variant supports
+structured outputs. We stay on `:free` and get schema-enforced output through **tool calling**: one tool
+whose parameters are the response schema, with `tool_choice` forcing the call.
 
-Now update so that on first hitting /, you need to log in with dummy credentials ("user", "password") in order to see the Kanban, and you can log out. Comprehensive tests.
+**Verification.** Every part: `vitest` + `pytest` + `playwright` green, **and** the container started and
+the feature used in a browser. Automated tests alone are not sufficient to close a part.
 
-Part 5: Database modeling
+---
 
-Now propose a database schema for the Kanban, saving it as JSON. Document the database approach in docs/ and get user sign off.
+## Part 1: Plan
 
-Part 6: Backend
+**Goal.** Turn this document into an executable plan and describe the existing frontend, then get sign-off.
 
-Now add API routes to allow the backend to read and change the Kanban for a given user; test this thoroughly with backend unit tests. The database should be created if it doesn't exist.
+- [x] Review [../CLAUDE.md](../CLAUDE.md) and the existing frontend source
+- [x] Resolve open questions with the user (auth, card editing, Docker, verification depth)
+- [x] Verify the OpenRouter model's capabilities against the live model list
+- [x] Write [../frontend/CLAUDE.md](../frontend/CLAUDE.md)
+- [x] Rewrite this document with checklists, tests and success criteria per part
+- [x] User approves the plan
 
-Part 7: Frontend + Backend
+**Tests.** None (documentation).
 
-Now have the frontend actually use the backend API, so that the app is a proper persistent Kanban board. Test very throughly.
+**Success criteria.** Every claim in `frontend/CLAUDE.md` matches the source. All ten parts have a goal,
+checklist, tests and success criteria. User has signed off.
 
-Part 8: AI connectivity
+---
 
-Now allow the backend to make an AI call via OpenRouter. Test connectivity with a simple "2+2" test and ensure the AI call is working.
+## Part 2: Scaffolding
 
-Part 9: Now extend the backend call so that it always calls the AI with the JSON of the Kanban board, plus the user's question (and conversation history). The AI should respond with Structured Outputs that includes the response to the user and optionaly an update to the Kanban. Test thoroughly.
+**Goal.** A Docker container running FastAPI that serves a static hello-world page at `/` and answers an
+API call, started and stopped by scripts.
 
-Part 10: Now add a beautiful sidebar widget to the UI supporting full AI chat, and allowing the LLM (as it determines) to update the Kanban based on its Structured Outputs. If the AI updates the Kanban, then the UI should refresh automatically.
+- [x] `backend/` Python project managed by `uv`: `pyproject.toml`, FastAPI, uvicorn, pytest, `httpx2`
+- [x] `backend/app/main.py` with the FastAPI app; routes under `/api`, static mount at `/`
+- [x] `GET /api/health` returning `{"status": "ok"}`
+- [x] Placeholder `static/index.html` that calls `/api/health` and renders the result
+- [x] `Dockerfile`, multi-stage: node stage (placeholder for the Next build in Part 3) → `uv` runtime stage
+- [x] `.dockerignore` excluding `node_modules`, `.next`, `.git`, `test-results`
+- [x] Container reads `OPENROUTER_API_KEY` from the project-root `.env` at run time (not baked into the image)
+- [x] `scripts/start.sh` and `scripts/stop.sh` (Mac/Linux), `scripts/start.ps1` and `scripts/stop.ps1` (Windows)
+- [x] `scripts/test.sh` and `scripts/test.ps1` — pytest inside the uv image, since the host has no `uv`
+- [x] Replace `backend/AGENTS.md` and `scripts/AGENTS.md` stubs with real descriptions
+- [x] Root `README.md`, minimal: how to start, stop, and run tests
+
+**Tests.** `backend/tests/test_health.py` — `/api/health` returns 200 and the expected body; `/` returns the
+static page.
+
+**Success criteria.** `scripts/start.sh` builds and runs the container; `http://localhost:8000` shows the
+page with a live health result; `scripts/stop.sh` stops and removes it; `pytest` passes.
+
+---
+
+## Part 3: Add in Frontend
+
+**Goal.** The real Kanban board, statically built and served by FastAPI at `/`, with card editing added.
+
+- [ ] Set `output: "export"` in `frontend/next.config.ts`
+- [ ] Dockerfile node stage runs `npm ci && npm run build`; copy `frontend/out` into the runtime stage
+- [ ] FastAPI serves that directory at `/`, with `/api` routes taking precedence
+- [ ] Add card editing: click a card's title or details to edit in place, commit on blur or Enter, cancel on Escape
+- [ ] Add `updateCard(board, cardId, fields)` to `frontend/src/lib/kanban.ts` and a `handleUpdateCard` in `KanbanBoard.tsx`
+- [ ] Repoint `playwright.config.ts` `baseURL` and `webServer` at the container
+- [ ] Delete the stray `frontend/test-results/` directory and confirm it is gitignored
+
+**Tests.**
+- Unit (vitest): `updateCard` pure-function cases; editing a card title and details through `KanbanBoard`; existing rename/add/delete/`moveCard` tests still pass
+- E2E (Playwright): board loads at `/` with five columns; add a card; drag a card between columns; edit a card title and see it persist in the DOM
+- Backend (pytest): `/` serves the built `index.html`; a static asset resolves; an unknown `/api` path returns 404 rather than the SPA shell
+
+**Success criteria.** `npm run test:all` and `pytest` pass. The container serves the real board at `/`, and
+drag/drop, add, delete and edit all work in the browser.
+
+---
+
+## Part 4: Fake user sign in
+
+**Goal.** Hitting `/` unauthenticated shows a login form; `user`/`password` grants access to the board; log
+out returns to the form.
+
+- [ ] `POST /api/login` — validates credentials, sets an HttpOnly, SameSite=Lax session cookie
+- [ ] `POST /api/logout` — clears the cookie
+- [ ] `GET /api/me` — returns the session user, or 401
+- [ ] A FastAPI dependency that returns the session user or raises 401, applied to all protected routes
+- [ ] Login page component in the project palette; submit button uses `--secondary-purple`
+- [ ] Frontend checks `/api/me` on load and shows either the login form or the board
+- [ ] Log out control in the board header
+
+**Tests.**
+- Backend (pytest): login with correct credentials sets the cookie; wrong credentials return 401 and set no cookie; `/api/me` without a cookie returns 401, with one returns the user; logout clears it and `/api/me` returns 401 again
+- Unit (vitest): login form renders, submits, and shows an error on rejection; board renders when `/api/me` succeeds (fetch mocked)
+- E2E (Playwright): visiting `/` shows the login form; bad credentials show an error; good credentials show the board; reload keeps the session; logout returns to the form and the board is no longer reachable
+
+**Success criteria.** All suites pass. In the browser: cannot see the board before logging in, session
+survives a reload, logout works.
+
+---
+
+## Part 5: Database modeling
+
+**Goal.** An agreed SQLite schema, documented and signed off before any DB code is written.
+
+- [ ] `docs/DATABASE.md`: tables, columns, types, keys, constraints, and the reasoning
+- [ ] `users` table — supports multiple users even though the MVP hardcodes one
+- [ ] `boards` table — one row per user for the MVP, but keyed so more are possible later; board content stored as a JSON column matching `BoardData` (`columns` + `cards`)
+- [ ] Document why JSON rather than normalized card/column tables, and what that costs
+- [ ] Document creation-on-startup behaviour and where the file lives (a Docker volume, so data survives a container rebuild)
+- [ ] Sample JSON document matching the frontend's `BoardData`
+- [ ] **User signs off before Part 6**
+
+**Tests.** None (documentation).
+
+**Success criteria.** The schema covers everything Parts 6-9 need to read and write. User has approved
+`docs/DATABASE.md`.
+
+---
+
+## Part 6: Backend
+
+**Goal.** API routes to read and write the signed-in user's board, backed by SQLite created on first run.
+
+- [ ] Schema created at startup if the DB file is absent; seed the demo board for a new user
+- [ ] Pydantic models mirroring `Card`, `Column`, `BoardData`
+- [ ] `GET /api/board` — the session user's board
+- [ ] `PUT /api/board` — replace the board, validated against the models
+- [ ] All board routes behind the Part 4 auth dependency
+- [ ] Persist the SQLite file to a mounted volume so it survives `stop` then `start`
+
+**Tests.** pytest against a temporary DB: DB and schema are created when absent; a new user gets a seeded
+board; `GET /api/board` returns it; `PUT` then `GET` round-trips; malformed board JSON returns 422; both
+routes return 401 without a session; one user cannot read another's board.
+
+**Success criteria.** `pytest` passes. Starting the container with no DB file creates one; stopping and
+restarting preserves board changes made through the API.
+
+---
+
+## Part 7: Frontend plus Backend
+
+**Goal.** The board is genuinely persistent — the frontend reads and writes through the API.
+
+- [ ] `frontend/src/lib/api.ts` with typed `getBoard()` / `saveBoard()` helpers, `credentials: "include"`
+- [ ] `KanbanBoard` loads from `GET /api/board` instead of `initialData`, with loading and error states
+- [ ] All five mutations (rename, add, edit, delete, move) persist via `PUT /api/board`
+- [ ] Debounce column rename so it does not fire per keystroke
+- [ ] Keep `moveCard` / `updateCard` as the local reducers; send their result rather than reimplementing logic server-side
+- [ ] `initialData` stays only as the backend's seed source, not as frontend state
+
+**Tests.**
+- Unit (vitest): loading state; board rendered from a mocked API response; each mutation issues a `PUT` with the expected payload; rename debounce collapses rapid keystrokes into one request; API failure surfaces an error
+- E2E (Playwright): log in, move a card, reload, card is still in its new column; same for add, edit and delete
+- Backend (pytest): existing suites still pass
+
+**Success criteria.** All suites pass. In the browser: every change survives a reload, and survives
+`stop.sh` followed by `start.sh`.
+
+---
+
+## Part 8: AI connectivity
+
+**Goal.** Prove the backend can reach OpenRouter.
+
+- [ ] `OPENROUTER_API_KEY` loaded from the environment; startup fails with a clear message if it is missing
+- [ ] A small OpenRouter client module in `backend/`, model `nvidia/nemotron-3-ultra-550b-a55b:free`
+- [ ] `POST /api/ai/ping` (auth-protected) sending a fixed "what is 2+2" prompt and returning the reply
+- [ ] Sensible timeout, and upstream errors surfaced as a clean 502 rather than a stack trace
+
+**Tests.** pytest with the HTTP call mocked: the request carries the right model, auth header and messages;
+an upstream error becomes a 502; the route needs auth. Plus one manual live call confirming a real answer of
+4 — record the result, do not put a network-dependent test in the suite.
+
+**Success criteria.** Mocked tests pass, and a real call against OpenRouter returns 4.
+
+---
+
+## Part 9: AI over the board
+
+**Goal.** The AI sees the board and the conversation, replies to the user, and may return a board update.
+
+- [ ] `POST /api/ai/chat` taking the user's message and conversation history
+- [ ] Prompt assembles: system instructions, the current board JSON from the DB, history, and the new message
+- [ ] Define one tool, e.g. `respond`, whose parameters are `{ reply: string, board?: BoardData }`, and set `tool_choice` to force it
+- [ ] Parse the tool call; validate `board` against the Pydantic models and reject anything malformed
+- [ ] If a valid board comes back, persist it and tell the caller the board changed
+- [ ] Response shape: `{ reply, board_updated: bool, board: BoardData | null }`
+- [ ] Cap history length so the prompt cannot grow without bound
+
+**Tests.** pytest with the OpenRouter call mocked: a reply-only tool call leaves the DB untouched; a tool
+call with a board persists it and sets `board_updated`; an invalid board is rejected with the DB unchanged
+and an error returned; the prompt contains the current board JSON and the supplied history; history is
+truncated at the cap; the route needs auth. Plus one live call — "move card X to Done" — confirming a real
+board update.
+
+**Success criteria.** Mocked tests pass, and a live request that asks for a board change produces a valid,
+persisted update.
+
+---
+
+## Part 10: AI sidebar
+
+**Goal.** A chat sidebar where the AI can talk and change the board, with the board refreshing when it does.
+
+- [ ] Collapsible sidebar in the project palette, alongside the board without overlapping it
+- [ ] Message list distinguishing user and AI turns, with a pending indicator while waiting
+- [ ] Input posts to `/api/ai/chat` with the running conversation history
+- [ ] When `board_updated` is true, update board state from the response so the UI refreshes without a reload
+- [ ] Errors shown in the thread, not swallowed
+- [ ] Conversation history held in component state; it is not persisted in the MVP
+
+**Tests.**
+- Unit (vitest): sidebar opens and closes; a sent message appears and the reply renders; pending state shows while in flight; a `board_updated` response re-renders the board; an API error shows a message in the thread
+- E2E (Playwright): log in, open the sidebar, ask a question, see a reply; ask for a card to move and see the board update without a reload, with the change surviving a refresh
+
+**Success criteria.** All suites pass. In the browser, a real conversation with the AI moves a real card and
+the board updates on its own.
