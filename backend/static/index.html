@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Kanban Studio</title>
+    <style>
+      :root {
+        --accent-yellow: #ecad0a;
+        --primary-blue: #209dd7;
+        --secondary-purple: #753991;
+        --navy-dark: #032147;
+        --gray-text: #888888;
+        --surface: #f7f8fb;
+        --stroke: rgba(3, 33, 71, 0.08);
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: var(--surface);
+        color: var(--navy-dark);
+        font-family: "Segoe UI", system-ui, sans-serif;
+      }
+      main {
+        max-width: 32rem;
+        padding: 2.5rem;
+        border: 1px solid var(--stroke);
+        border-radius: 1.5rem;
+        background: #ffffff;
+        box-shadow: 0 18px 40px rgba(3, 33, 71, 0.12);
+      }
+      .rule {
+        width: 3rem;
+        height: 0.25rem;
+        border-radius: 999px;
+        background: var(--accent-yellow);
+      }
+      h1 {
+        margin: 1rem 0 0.5rem;
+        font-size: 1.75rem;
+      }
+      p {
+        color: var(--gray-text);
+        line-height: 1.6;
+      }
+      #health {
+        margin-top: 1.5rem;
+        padding: 1rem;
+        border-radius: 0.75rem;
+        background: var(--surface);
+        font-family: ui-monospace, monospace;
+        color: var(--primary-blue);
+      }
+      #health.error {
+        color: var(--secondary-purple);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="rule"></div>
+      <h1>Kanban Studio</h1>
+      <p>
+        Scaffolding is live. FastAPI is serving this page and the API from a
+        single container. The Kanban board arrives in Part 3.
+      </p>
+      <div id="health">Checking /api/health...</div>
+    </main>
+    <script>
+      const target = document.getElementById("health");
+      fetch("/api/health")
+        .then((response) => {
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+          return response.json();
+        })
+        .then((data) => {
+          target.textContent = `GET /api/health -> ${JSON.stringify(data)}`;
+        })
+        .catch((error) => {
+          target.classList.add("error");
+          target.textContent = `GET /api/health failed: ${error.message}`;
+        });
+    </script>
+  </body>
+</html>
