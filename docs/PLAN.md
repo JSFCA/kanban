@@ -101,13 +101,14 @@ drag/drop, add, delete and edit all work in the browser.
 **Goal.** Hitting `/` unauthenticated shows a login form; `user`/`password` grants access to the board; log
 out returns to the form.
 
-- [ ] `POST /api/login` — validates credentials, sets an HttpOnly, SameSite=Lax session cookie
-- [ ] `POST /api/logout` — clears the cookie
-- [ ] `GET /api/me` — returns the session user, or 401
-- [ ] A FastAPI dependency that returns the session user or raises 401, applied to all protected routes
-- [ ] Login page component in the project palette; submit button uses `--secondary-purple`
-- [ ] Frontend checks `/api/me` on load and shows either the login form or the board
-- [ ] Log out control in the board header
+- [x] `POST /api/login` — validates credentials, sets an HttpOnly, SameSite=Lax session cookie
+- [x] `POST /api/logout` — clears the cookie
+- [x] `GET /api/me` — returns the session user, or 401
+- [x] A FastAPI dependency that returns the session user or raises 401, applied to all protected routes
+- [x] Login page component in the project palette; submit button uses `--secondary-purple`
+- [x] Frontend checks `/api/me` on load and shows either the login form or the board
+- [x] Log out control in the board header
+- [x] `frontend/src/lib/api.ts` introduced early (Part 7 extends it with the board calls)
 
 **Tests.**
 - Backend (pytest): login with correct credentials sets the cookie; wrong credentials return 401 and set no cookie; `/api/me` without a cookie returns 401, with one returns the user; logout clears it and `/api/me` returns 401 again
