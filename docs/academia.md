@@ -650,3 +650,296 @@ Fine for a local MVP, not fine for anything real:
 No code at all. Part 5 designs the SQLite schema — users, boards, and the board stored as JSON — writes it
 up in `docs/DATABASE.md`, and stops for sign-off. Part 6 then builds against the agreed design rather than
 discovering it while writing queries.
+
+## Part 5: designing before building
+
+The whole part produced one document, [DATABASE.md](DATABASE.md), and then stopped for approval.
+
+That feels like a detour and is the opposite. Schema decisions are the expensive kind to reverse: once real
+rows exist, changing your mind means writing a migration rather than editing a file. Deciding on paper
+costs an hour; deciding in code costs a migration and whatever data got mangled on the way.
+
+Three questions were settled there, and each could reasonably have gone the other way — which is exactly
+why they were worth asking rather than assuming. Whether `users` should carry a password column. Whether
+the database should enforce one board per user. Where the file should live.
+
+The part is also where a claim got checked instead of trusted. The schema was executed against real SQLite,
+which surfaced something that would otherwise have been discovered as a mysterious bug much later:
+
+```
+connection 1 (ran the schema)  foreign_keys = 1
+connection 2 (fresh)           foreign_keys = 0
+  INSERT INTO boards (user_id, data) VALUES (999, '{}')  ->  accepted
+```
+
+A board belonging to a user who does not exist, stored without complaint. More on why below.
+
+## Part 6: storing the board
+
+### Why a database and not a file
+
+The board is a single JSON document, so "just write it to a file" is a fair question. A database earns its
+place here for three reasons: it scopes data to a user without inventing a filename convention, it applies
+constraints the application would otherwise have to remember, and it handles two requests arriving at once
+without corrupting the file.
+
+**SQLite** is the smallest thing that does that. There is no server process and no configuration — the
+whole database is one file, and the library reads and writes it directly. For an app with one user and a
+few dozen cards, anything more is overhead. The shape of the code barely changes if you outgrow it.
+
+### The pragma that only half works
+
+This is the most transferable thing in this part.
+
+SQLite lets you declare a foreign key — `boards.user_id REFERENCES users(id)` — meaning a board must belong
+to a real user. But **foreign key enforcement is off by default**, and turning it on is per *connection*,
+not per database:
+
+```sql
+PRAGMA foreign_keys = ON;
+```
+
+Run that when you create the schema and it protects exactly one connection: the one that ran it. Every
+request afterwards opens a fresh connection, which starts with enforcement off again. The constraint is
+still written in the schema, looks correct, and does nothing.
+
+The fix is to make it impossible to get a connection without it:
+
+```python
+@contextmanager
+def connect(db_path):
+    connection = sqlite3.connect(db_path)
+    connection.execute("PRAGMA foreign_keys = ON")
+    ...
+```
+
+Everything goes through that helper, and a test asserts an orphan insert still raises. The general pattern:
+when correctness depends on remembering a setup step, remove the option to forget it.
+
+### Startup, not import
+
+The schema is created when the app *starts*, not when the module is imported:
+
+```python
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    initialise(db_path, USERNAME)
+    yield
+```
+
+This is the same lesson Part 3 taught the hard way. Importing a module should compute nothing and touch
+nothing — it should only define things. Put `initialise()` at module level and merely importing the file to
+run one unrelated test would create directories and databases.
+
+A **lifespan** is FastAPI's hook for "do this once when the server starts, and clean up when it stops". In
+tests it runs when `TestClient` is used as a context manager, which is why the board tests say
+`with TestClient(app) as client`.
+
+### Idempotent startup
+
+Every startup step is written so that running it a hundred times is the same as running it once:
+
+```sql
+CREATE TABLE IF NOT EXISTS users (...)
+INSERT OR IGNORE INTO users (username) VALUES (?)
+```
+
+That word — **idempotent** — is worth knowing. It means there is no separate "first run" path to get wrong,
+no flag file, no "have I set up yet?" check. The server does the same thing on every boot and the outcome
+is correct either way.
+
+### Designing around a constraint you deliberately left out
+
+The schema has no rule saying a user gets only one board, because adding more later should not require a
+migration. The consequence is that the code cannot assume there is exactly one row:
+
+```sql
+SELECT data FROM boards WHERE user_id = ? ORDER BY id LIMIT 1
+```
+
+`ORDER BY id LIMIT 1` rather than a bare select. Without the ordering, "the" board is whichever row the
+database felt like returning, which can change. If you loosen a guarantee, the code has to become stricter
+to compensate — a trade that is easy to make and then forget the second half of.
+
+### Validation the database cannot do
+
+Storing the board as one JSON blob means the database cannot check *inside* it. Nothing stops a column
+listing a card id that no longer exists — the UI would silently skip it, and you would be left wondering
+where a card went. So the Pydantic model checks it:
+
+```python
+@model_validator(mode="after")
+def every_card_id_resolves(self):
+    dangling = [...]
+    if dangling:
+        raise ValueError(...)
+```
+
+A **validator** runs after the basic type checks and can enforce rules involving several fields at once. A
+request that fails it gets a 422 and never reaches the database. Part 9 leans on this heavily, since by
+then it is an AI generating the board.
+
+### Containers forget; volumes remember
+
+`stop.sh` deletes the container, and everything written inside its filesystem goes with it. A database
+inside the container would last exactly until the next rebuild.
+
+```
+host                                    container
+./data/kanban.db        <-- mounted -->  /app/data/kanban.db
+```
+
+`start.sh` passes `-v "$ROOT/data":/app/data`, which makes that host folder *be* that container folder.
+Writes land on your machine and survive anything Docker does. It is also the reason you can open
+`data/kanban.db` in a SQLite browser and read exactly what the app stored.
+
+Proving it took stopping the container, rebuilding, starting, and reading the value back — not just
+checking that the code looked right.
+
+### The bug that took three parts to catch
+
+The end-to-end suite had been failing intermittently since Part 4. The error was always the same and always
+useless:
+
+```
+Error: Process from config.webServer exited early.
+```
+
+Two earlier attempts to look at it failed because the command being run piped output through `grep` to keep
+the logs short — which discarded the very lines that explained the failure. **Filtering output while
+debugging hides the answer.**
+
+Running the script under `bash -x` gave the truth immediately:
+
+```
++ echo 'Kanban Studio running at http://localhost:8000'
++ exit 0
+START_EXIT=0
+Error: Process from config.webServer exited early.
+```
+
+The script succeeded. The container was running. Playwright failed anyway.
+
+The cause was a mismatch of expectations. Playwright's `webServer` option is built for a command that
+*stays running in the foreground* — `npm run dev`, say — and it treats the command exiting as the server
+dying. Our script starts a container in the background and returns immediately. Whether a run passed came
+down to whether Playwright's health poll happened to land before the script finished. It had been passing
+by luck.
+
+The fix was to use `globalSetup` instead, which is the hook meant for "make sure this external thing is
+running before the tests". Then the previously flaky sequence ran four times cold, all green.
+
+Three things generalise from this. An error message names where a problem was *detected*, not where it was
+*caused*. An intermittent failure is a real failure with a timing component, not noise to re-run away. And
+when you cannot see why something fails, add tracing rather than theories.
+
+## Part 7: joining the two halves
+
+### What changed
+
+The board stopped living in the browser. Until now `KanbanBoard` started from a hardcoded `initialData` and
+every edit lived in React state until you refreshed it away. Now it loads from `GET /api/board` and saves
+every change with `PUT /api/board`.
+
+`initialData` was **deleted** from the frontend rather than left lying around. Two copies of the same demo
+board would drift, and then you would have two answers to "what does a new user see?". One definition,
+[backend/app/seed.py](../backend/app/seed.py).
+
+### Update locally, then save
+
+Every mutation funnels through one function:
+
+```tsx
+const apply = (next: BoardData, delay = 0) => {
+  setBoard(next);           // the UI updates immediately
+  ...
+  saveTimer.current = setTimeout(() => {
+    saveBoard(next).catch((cause) => setError(cause.message));
+  }, delay);
+};
+```
+
+The screen updates first and the server is told afterwards. The alternative — disable the card, send the
+request, wait, then re-render — would make every drag feel sluggish for no benefit.
+
+Note what is *not* here: no logic about what a move or an edit means. `moveCard` and `updateCard` still
+decide that, exactly as they did when there was no backend, and the server stores whatever they produce.
+The rule is one definition of each behaviour. Reimplementing card ordering in Python would mean two
+implementations to keep in agreement, and they would eventually disagree.
+
+### Debouncing
+
+Renaming a column fires on every keystroke. Typing "Needs review" is twelve state updates, and without care
+twelve HTTP requests — each overwriting the last, eleven of them pointless.
+
+**Debouncing** means waiting for the typing to stop:
+
+```tsx
+saveTimer.current = setTimeout(() => saveBoard(next), delay);
+```
+
+Each call clears the previous timer, so only the last one survives. Renames pass 400ms; everything else
+passes 0, because a click is already a finished action. One shared timer also means a click during typing
+saves the newest board, not a stale one.
+
+### Loading and error states
+
+Fetching takes time, so `board` starts as `null` and there are now three things to render: loading, error,
+or the board. Every handler begins `if (!board) return`, which is TypeScript insisting the "not loaded yet"
+case be handled rather than assumed away.
+
+### The tests changed character
+
+This is the subtle part, and it applies to any app the moment it gains a database.
+
+Before, every end-to-end test started from an identical page, because the board was rebuilt from a constant
+on each load. Now tests **mutate shared state that outlives them**. A test that deletes a card changes what
+the next test sees, and a suite that passes in order can fail when shuffled.
+
+Two changes make it honest:
+
+- **Serial execution** (`workers: 1`). Parallel tests were writing to the same board through the same API.
+- **Reset before each test.** Each one signs in, `PUT`s a known board, and only then touches the UI.
+  Starting from a defined state beats hoping the previous test tidied up.
+
+There is also a small helper, `savedAfter(...)`, that waits for the `PUT` to actually reach the server
+before reloading the page. Without it the test races the network and fails roughly whenever the machine is
+busy — the same category as the Part 6 flake.
+
+### One locator, two answers
+
+A selector that passed in the unit tests failed in the browser tests:
+
+```ts
+page.getByRole("button", { name: "Delete Gather customer signals" })
+```
+
+Two separate causes, both about **accessible names** — the label assistive technology reads for an element.
+
+First, dnd-kit marks each card `role="button"` so it can be dragged from a keyboard, and a button's
+accessible name is built from the text inside it. The card's name therefore contains its title, its
+details, *and* the delete button's label. Two elements matched. Playwright compares names by **substring**;
+Testing Library compares them **exactly** — so identical-looking code disagreed across the two tools.
+
+Second, the fix that seemed obvious — look for the visible word "Remove" — matched nothing, because the
+button carries `aria-label="Delete ..."` and **`aria-label` overrides the visible text**. The name is the
+label, not what your eyes see.
+
+The working version scopes to the card and demands an exact match. The lesson is less about Playwright than
+about knowing that "the name of a button" is a computed thing with rules, not simply its text.
+
+### Test counts after Part 7
+
+```
+24  backend            pytest
+22  frontend unit      vitest
+12  end to end         playwright
+```
+
+Every end-to-end test now performs a change, reloads the page, and asserts it is still there.
+
+### What Part 8 changes
+
+The first AI call. The backend gains an OpenRouter client and a single endpoint that asks the model what
+2+2 is — no board, no context, nothing clever. Proving the connection, the API key and the error handling
+work in isolation is much easier before there is a prompt to blame.
