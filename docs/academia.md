@@ -449,3 +449,204 @@ then the `RuntimeError` above — each one naming the thing that did not exist y
 Hitting `/` will require logging in. FastAPI gains `/api/login`, `/api/logout` and `/api/me`, and sets a
 session cookie the browser sends back on every later request. The board renders only once that check
 passes.
+
+## Part 4: signing in
+
+### The problem cookies solve
+
+HTTP has no memory. Each request arrives with no idea that you sent one a second ago, so "I already
+logged in" is not something the server knows — it has to be re-established on every single request.
+
+A **cookie** is how. The server sends a `Set-Cookie` header once, the browser stores it, and the browser
+then attaches it automatically to every later request to that site. You never write code to send it; that
+is the browser's job.
+
+```
+POST /api/login  {username, password}
+  <- 200, Set-Cookie: session=eyJ1c2Vy...
+
+GET /api/me
+  -> Cookie: session=eyJ1c2Vy...     (browser adds this by itself)
+  <- 200 {"username": "user"}
+```
+
+A **session** is just what we chose to put in that cookie: the fact that this browser belongs to `user`.
+
+### Why the cookie has to be signed
+
+Here is the obvious approach and why it fails. Put `session=user` in a plain cookie, then trust it.
+
+Cookies live in the browser, which the visitor controls entirely. Anyone can open developer tools and edit
+`session=user` to `session=admin`. A plain cookie is a claim, not proof.
+
+So we **sign** it. The server holds a secret string, and appends a signature computed from the cookie's
+contents plus that secret. Change one character of the contents and the signature no longer matches, so the
+server rejects it. Forging a valid signature means guessing the secret.
+
+That is what `SessionMiddleware` and the `itsdangerous` library do:
+
+```python
+app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET, same_site="lax")
+```
+
+`request.session` then behaves like a dictionary. Write to it, and the middleware encodes and signs the
+whole thing into the cookie on the way out; read from it, and the middleware has already verified the
+signature on the way in.
+
+`SESSION_SECRET` comes from the environment with a local development fallback. Change it and every existing
+session becomes invalid, because none of the old signatures verify any more — which is exactly the
+behaviour you want if a secret ever leaks.
+
+Note the cookie is signed, not encrypted: its contents are readable by anyone holding it. Signing proves
+nobody *altered* it. Don't put anything private in a session cookie.
+
+### Two flags that matter
+
+`SessionMiddleware` sets both for us, and both defend against a specific attack:
+
+- **HttpOnly** — JavaScript cannot read the cookie. If someone manages to inject a script into your page,
+  it still cannot read the session and send it elsewhere. A test asserts this flag is present, because
+  losing it is silent and serious.
+- **SameSite=Lax** — the browser will not attach the cookie to requests originating from another site.
+  That blocks the trick where a malicious page quietly fires a request at your app and rides your session.
+
+### Dependencies: FastAPI's way of saying "signed in required"
+
+```python
+def require_user(request: Request) -> User:
+    username = request.session.get("username")
+    if not username:
+        raise HTTPException(status_code=401, detail="Not signed in")
+    return User(username=username)
+
+
+@app.get("/api/me")
+def me(user: User = Depends(require_user)) -> User:
+    return user
+```
+
+`Depends` tells FastAPI: before running this route, run `require_user` and pass me the result. If it raises
+401, the route never executes.
+
+This matters more than it looks. The requirement is declared in the function signature rather than as a
+line of code you have to remember to write at the top of every handler. Parts 6 and 9 add routes returning
+board contents, and each one needs exactly this parameter. **A route without it is open to the world**, so
+it is worth grepping for when adding endpoints.
+
+`Credentials` and `User` are Pydantic models — classes describing a shape. FastAPI reads them and validates
+the incoming JSON for free: send a login request without a password and you get a 422 explaining what was
+missing, without a single line of checking code.
+
+### The bit that surprises people: the login page is not a lock
+
+Our frontend is a static export. There is one `index.html` and it is served to **everyone**, signed in or
+not. The gate is a decision the JavaScript makes after it loads:
+
+```tsx
+fetchMe().then(setUser)...
+
+if (!user) return <LoginForm onSignedIn={setUser} />;
+return <KanbanBoard ... />;
+```
+
+So an unauthenticated visitor genuinely downloads the board's code. They just never receive any **data**,
+because `/api` refuses them.
+
+That distinction is the whole point:
+
+| | What it does |
+|---|---|
+| The login screen | Decides what to render. A convenience. |
+| `require_user` on `/api` | Decides what data leaves the server. The actual security. |
+
+This is not a weakness of static export — client-side checks are never the real defence in *any*
+architecture, because the client is under the visitor's control. A server-rendered app can hide the HTML,
+which is tidier, but if its API were unprotected it would be just as exposed. The rule generalises: security
+lives where the data lives.
+
+The end-to-end suite asserts this directly rather than through the UI:
+
+```ts
+test("the API refuses to identify a signed-out visitor", async ({ request }) => {
+  const response = await request.get("/api/me");
+  expect(response.status()).toBe(401);
+});
+```
+
+No browser, no login form — just the raw request an attacker would make.
+
+### The frontend gate
+
+`AuthGate` is a small state machine with three states: still checking, signed out, signed in.
+
+```tsx
+const [user, setUser] = useState<User | null>(null);
+const [checking, setChecking] = useState(true);
+```
+
+The `checking` flag exists because asking the server takes time. Without it there would be a flash of the
+login form before the answer arrives, even for someone already signed in.
+
+One small design choice worth copying: `fetchMe()` returns `null` for a 401 instead of throwing. Being
+signed out is a normal, expected answer, not an error, so callers get a plain `if` rather than a
+`try/catch`. Reserve exceptions for things that genuinely went wrong.
+
+### Testing without a server: mocking
+
+The unit tests never start FastAPI. They replace the browser's `fetch` with a fake that returns whatever
+the test wants:
+
+```ts
+const mockApi = (routes: Record<string, Reply>) => { ... }
+
+mockApi({
+  "GET /api/me": { status: 401 },
+  "POST /api/login": { status: 200, body: { username: "user" } },
+});
+```
+
+Instant, and it can produce responses that are awkward to trigger for real. The cost is that a mock is your
+*assumption* about the server: if the real API changed its shape, these tests would keep passing while the
+app broke. That is why the same flows are also covered end to end against the real container. Mocks check
+your logic; end-to-end checks your assumptions.
+
+### Two false alarms from the test suite
+
+Both were bugs in the tests, not the app, and both are the kind of thing that wastes an afternoon.
+
+**Both screens render the same heading.** The login form and the board each show `<h1>Kanban Studio</h1>`,
+so "the board is not showing" could not be asserted by looking for that heading. Fixed by asserting on
+something only the board has — its column elements. Lesson: assert on what makes the thing *distinct*.
+
+**Next.js adds an invisible alert.** The test looked for the error message via `getByRole("alert")` and
+failed even though the message was plainly there. The page contained *two* elements with that role: ours,
+and a hidden one Next injects to announce route changes to screen readers. Playwright refuses to guess
+between two matches. Fixed by scoping the search to the form.
+
+The second one was only diagnosable because Playwright saves a snapshot of the page on failure, which
+listed both alerts. When a test fails for a reason that makes no sense, read the artifacts before changing
+any code.
+
+### Honest limitations
+
+Fine for a local MVP, not fine for anything real:
+
+- The password is compared as plain text against a constant. Real systems store a hash, from a slow
+  algorithm built for the purpose, so a stolen database does not hand over everyone's password.
+- One hardcoded account. Part 5 designs a users table.
+- No rate limiting, so passwords could be guessed indefinitely.
+- The dev `SESSION_SECRET` is in the repository. Anything public needs a real one from the environment.
+
+### Test counts after Part 4
+
+```
+13  backend            pytest
+21  frontend unit      vitest
+10  end to end         playwright
+```
+
+### What Part 5 changes
+
+No code at all. Part 5 designs the SQLite schema — users, boards, and the board stored as JSON — writes it
+up in `docs/DATABASE.md`, and stops for sign-off. Part 6 then builds against the agreed design rather than
+discovering it while writing queries.
