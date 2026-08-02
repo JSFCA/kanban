@@ -10,6 +10,9 @@ export default defineConfig({
     timeout: 10_000,
   },
   globalSetup: "./global-setup.ts",
+  // The board is persisted, so tests share server state and must not overlap.
+  workers: 1,
+  fullyParallel: false,
   use: {
     baseURL: "http://localhost:8000",
     trace: "retain-on-failure",

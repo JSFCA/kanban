@@ -1,3 +1,5 @@
+import type { BoardData } from "@/lib/kanban";
+
 export type User = { username: string };
 
 export class ApiError extends Error {}
@@ -48,5 +50,23 @@ export const logout = async (): Promise<void> => {
   const response = await request("/api/logout", { method: "POST" });
   if (!response.ok) {
     throw new ApiError(`Sign out failed (${response.status})`);
+  }
+};
+
+export const getBoard = async (): Promise<BoardData> => {
+  const response = await request("/api/board");
+  if (!response.ok) {
+    throw new ApiError(`Could not load the board (${response.status})`);
+  }
+  return response.json();
+};
+
+export const saveBoard = async (board: BoardData): Promise<void> => {
+  const response = await request("/api/board", {
+    method: "PUT",
+    body: JSON.stringify(board),
+  });
+  if (!response.ok) {
+    throw new ApiError(`Could not save the board (${response.status})`);
   }
 };

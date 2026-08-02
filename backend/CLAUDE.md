@@ -59,8 +59,7 @@ SQLite at `/app/data/kanban.db`, bind-mounted from `./data` on the host. Design 
 - `BoardData` validates that every `cardIds` entry resolves to a real card. The board is one JSON blob, so
   the database cannot express that with a foreign key; the model is the only thing enforcing it. Part 9
   relies on this to reject bad AI output.
-- `app/seed.py` mirrors `initialData` in the frontend. Change one and change the other until Part 7 makes
-  the backend the only source.
+- `app/seed.py` is the only source of the demo board. The frontend's `initialData` was deleted in Part 7.
 
 ## Running
 
