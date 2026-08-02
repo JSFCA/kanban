@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -15,22 +15,26 @@ import { KanbanColumn } from "@/components/KanbanColumn";
 import { KanbanCardPreview } from "@/components/KanbanCardPreview";
 import {
   createId,
-  initialData,
   moveCard,
   updateCard,
   type BoardData,
   type Card,
 } from "@/lib/kanban";
-import type { User } from "@/lib/api";
+import { getBoard, saveBoard, type User } from "@/lib/api";
 
 type KanbanBoardProps = {
   user?: User;
   onSignOut?: () => void;
 };
 
+/** Column renames fire per keystroke; only the settled value is worth saving. */
+const RENAME_DEBOUNCE_MS = 400;
+
 export const KanbanBoard = ({ user, onSignOut }: KanbanBoardProps) => {
-  const [board, setBoard] = useState<BoardData>(() => initialData);
+  const [board, setBoard] = useState<BoardData | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -38,7 +42,33 @@ export const KanbanBoard = ({ user, onSignOut }: KanbanBoardProps) => {
     })
   );
 
-  const cardsById = useMemo(() => board.cards, [board.cards]);
+  useEffect(() => {
+    getBoard()
+      .then(setBoard)
+      .catch((cause: Error) => setError(cause.message));
+  }, []);
+
+  useEffect(() => () => {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+    }
+  }, []);
+
+  /**
+   * Applies a new board locally, then saves it. The pure reducers in lib/kanban
+   * stay the single source of truth for what a change means; the server only
+   * stores the result.
+   */
+  const apply = (next: BoardData, delay = 0) => {
+    setBoard(next);
+    setError(null);
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+    }
+    saveTimer.current = setTimeout(() => {
+      saveBoard(next).catch((cause: Error) => setError(cause.message));
+    }, delay);
+  };
 
   const handleDragStart = (event: DragStartEvent) => {
     setActiveCardId(event.active.id as string);
@@ -48,68 +78,89 @@ export const KanbanBoard = ({ user, onSignOut }: KanbanBoardProps) => {
     const { active, over } = event;
     setActiveCardId(null);
 
-    if (!over || active.id === over.id) {
+    if (!board || !over || active.id === over.id) {
       return;
     }
 
-    setBoard((prev) => ({
-      ...prev,
-      columns: moveCard(prev.columns, active.id as string, over.id as string),
-    }));
+    apply({
+      ...board,
+      columns: moveCard(board.columns, active.id as string, over.id as string),
+    });
   };
 
   const handleRenameColumn = (columnId: string, title: string) => {
-    setBoard((prev) => ({
-      ...prev,
-      columns: prev.columns.map((column) =>
-        column.id === columnId ? { ...column, title } : column
-      ),
-    }));
+    if (!board) return;
+    apply(
+      {
+        ...board,
+        columns: board.columns.map((column) =>
+          column.id === columnId ? { ...column, title } : column
+        ),
+      },
+      RENAME_DEBOUNCE_MS
+    );
   };
 
   const handleAddCard = (columnId: string, title: string, details: string) => {
+    if (!board) return;
     const id = createId("card");
-    setBoard((prev) => ({
-      ...prev,
+    apply({
+      ...board,
       cards: {
-        ...prev.cards,
+        ...board.cards,
         [id]: { id, title, details: details || "No details yet." },
       },
-      columns: prev.columns.map((column) =>
+      columns: board.columns.map((column) =>
         column.id === columnId
           ? { ...column, cardIds: [...column.cardIds, id] }
           : column
       ),
-    }));
-  };
-
-  const handleUpdateCard = (cardId: string, fields: Partial<Card>) => {
-    setBoard((prev) => ({
-      ...prev,
-      cards: updateCard(prev.cards, cardId, fields),
-    }));
-  };
-
-  const handleDeleteCard = (columnId: string, cardId: string) => {
-    setBoard((prev) => {
-      return {
-        ...prev,
-        cards: Object.fromEntries(
-          Object.entries(prev.cards).filter(([id]) => id !== cardId)
-        ),
-        columns: prev.columns.map((column) =>
-          column.id === columnId
-            ? {
-                ...column,
-                cardIds: column.cardIds.filter((id) => id !== cardId),
-              }
-            : column
-        ),
-      };
     });
   };
 
-  const activeCard = activeCardId ? cardsById[activeCardId] : null;
+  const handleUpdateCard = (cardId: string, fields: Partial<Card>) => {
+    if (!board) return;
+    apply({ ...board, cards: updateCard(board.cards, cardId, fields) });
+  };
+
+  const handleDeleteCard = (columnId: string, cardId: string) => {
+    if (!board) return;
+    apply({
+      ...board,
+      cards: Object.fromEntries(
+        Object.entries(board.cards).filter(([id]) => id !== cardId)
+      ),
+      columns: board.columns.map((column) =>
+        column.id === columnId
+          ? { ...column, cardIds: column.cardIds.filter((id) => id !== cardId) }
+          : column
+      ),
+    });
+  };
+
+  const banner = error && (
+    <p
+      role="alert"
+      className="rounded-2xl border border-[var(--stroke)] bg-white px-5 py-3 text-sm text-[var(--secondary-purple)]"
+    >
+      {error}
+    </p>
+  );
+
+  if (!board) {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center gap-4 px-6">
+        {banner}
+        {!error && (
+          <p className="text-xs font-semibold uppercase tracking-[0.3em] text-[var(--gray-text)]">
+            Loading your board
+          </p>
+        )}
+      </main>
+    );
+  }
+
+  const activeCard = activeCardId ? board.cards[activeCardId] : null;
 
   return (
     <div className="relative overflow-hidden">
@@ -158,6 +209,7 @@ export const KanbanBoard = ({ user, onSignOut }: KanbanBoardProps) => {
               </div>
             </div>
           </div>
+          {banner}
           <div className="flex flex-wrap items-center gap-4">
             {board.columns.map((column) => (
               <div

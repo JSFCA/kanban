@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AuthGate } from "@/components/AuthGate";
+import { testBoard } from "@/test/board-fixture";
 
 type Reply = { status: number; body?: unknown };
 
@@ -41,7 +42,9 @@ describe("AuthGate", () => {
   });
 
   it("shows the board when a session already exists", async () => {
-    mockApi({ "GET /api/me": { status: 200, body: { username: "user" } } });
+    mockApi({ "GET /api/me": { status: 200, body: { username: "user" } },
+      "GET /api/board": { status: 200, body: testBoard() },
+    });
 
     render(<AuthGate />);
 
@@ -53,6 +56,7 @@ describe("AuthGate", () => {
     mockApi({
       "GET /api/me": { status: 401 },
       "POST /api/login": { status: 200, body: { username: "user" } },
+      "GET /api/board": { status: 200, body: testBoard() },
     });
     render(<AuthGate />);
 
@@ -83,6 +87,7 @@ describe("AuthGate", () => {
   it("returns to the login form after signing out", async () => {
     mockApi({
       "GET /api/me": { status: 200, body: { username: "user" } },
+      "GET /api/board": { status: 200, body: testBoard() },
       "POST /api/logout": { status: 200, body: { status: "signed out" } },
     });
     render(<AuthGate />);

@@ -164,12 +164,13 @@ restarting preserves board changes made through the API.
 
 **Goal.** The board is genuinely persistent — the frontend reads and writes through the API.
 
-- [ ] `frontend/src/lib/api.ts` with typed `getBoard()` / `saveBoard()` helpers, `credentials: "include"`
-- [ ] `KanbanBoard` loads from `GET /api/board` instead of `initialData`, with loading and error states
-- [ ] All five mutations (rename, add, edit, delete, move) persist via `PUT /api/board`
-- [ ] Debounce column rename so it does not fire per keystroke
-- [ ] Keep `moveCard` / `updateCard` as the local reducers; send their result rather than reimplementing logic server-side
-- [ ] `initialData` stays only as the backend's seed source, not as frontend state
+- [x] `frontend/src/lib/api.ts` with typed `getBoard()` / `saveBoard()` helpers (`credentials: "same-origin"`, which is what same-origin requests need)
+- [x] `KanbanBoard` loads from `GET /api/board` instead of `initialData`, with loading and error states
+- [x] All five mutations (rename, add, edit, delete, move) persist via `PUT /api/board`
+- [x] Debounce column rename so it does not fire per keystroke
+- [x] Keep `moveCard` / `updateCard` as the local reducers; send their result rather than reimplementing logic server-side
+- [x] `initialData` deleted from the frontend; `backend/app/seed.py` is the only seed
+- [x] e2e runs serially and resets the board per test, now that tests mutate shared state
 
 **Tests.**
 - Unit (vitest): loading state; board rendered from a mocked API response; each mutation issues a `PUT` with the expected payload; rename debounce collapses rapid keystrokes into one request; API failure surfaces an error

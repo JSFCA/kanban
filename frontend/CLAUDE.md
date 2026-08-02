@@ -78,7 +78,13 @@ The four mutation points, all in `KanbanBoard.tsx`:
 | `handleDeleteCard` | Remove button on `KanbanCard` |
 | `handleDragEnd` | dnd-kit, delegates to `moveCard` |
 
-These are the functions that become API calls in Part 7.
+Every one of them goes through `apply(next, delay)`, which sets local state and then saves via
+`PUT /api/board`. The pure reducers stay the single source of truth for what a change *means*; the server
+only stores the result. Column rename passes a 400ms delay so a burst of keystrokes collapses into one
+request — `apply` clears any pending timer, so the latest board always wins.
+
+The board is loaded from `GET /api/board` on mount. `board` is `null` until it arrives, which is why every
+handler starts with a `if (!board) return` guard.
 
 ## Inline card editing
 
@@ -122,12 +128,18 @@ Stable selectors for tests: `data-testid="column-<columnId>"`, `data-testid="car
 `aria-label="Column title"`, `aria-label="Card title"`, `aria-label="Card details"`,
 `aria-label="Delete <card title>"`.
 
-Two gotchas when asserting which screen is showing:
+Gotchas when writing selectors:
 
 - Both `LoginForm` and `KanbanBoard` render an `<h1>Kanban Studio</h1>`, so that heading cannot tell them
   apart. Assert on `data-testid^="column-"` instead.
 - Next injects its own route-announcer element with `role="alert"`, so a bare `getByRole("alert")` matches
   two nodes and trips Playwright's strict mode. Scope it, e.g. `page.locator("form").getByRole("alert")`.
+- dnd-kit gives each card `role="button"`, and its accessible name concatenates all the inner text —
+  including the delete button's label. **Playwright matches `name` by substring, Testing Library matches it
+  exactly**, so a locator can pass in vitest and be ambiguous in Playwright. Scope to the card and pass
+  `exact: true`.
+- The delete button's accessible name is its `aria-label` (`Delete <title>`), not its visible text
+  ("Remove"). `aria-label` wins over content.
 
 ## Tests
 

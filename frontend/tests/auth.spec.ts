@@ -1,12 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-const columns = '[data-testid^="column-"]';
-
-const signIn = async (page: import("@playwright/test").Page, password: string) => {
-  await page.getByLabel("Username").fill("user");
-  await page.getByLabel("Password").fill(password);
-  await page.getByRole("button", { name: "Sign in" }).click();
-};
+import { COLUMNS as columns, signIn } from "./helpers";
 
 test("shows the login form instead of the board", async ({ page }) => {
   await page.goto("/");
