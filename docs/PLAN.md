@@ -144,12 +144,12 @@ survives a reload, logout works.
 
 **Goal.** API routes to read and write the signed-in user's board, backed by SQLite created on first run.
 
-- [ ] Schema created at startup if the DB file is absent; seed the demo board for a new user
-- [ ] Pydantic models mirroring `Card`, `Column`, `BoardData`
-- [ ] `GET /api/board` — the session user's board
-- [ ] `PUT /api/board` — replace the board, validated against the models
-- [ ] All board routes behind the Part 4 auth dependency
-- [ ] Persist the SQLite file to a mounted volume so it survives `stop` then `start`
+- [x] Schema created at startup if the DB file is absent; seed the demo board for a new user
+- [x] Pydantic models mirroring `Card`, `Column`, `BoardData`, including the dangling-`cardIds` invariant
+- [x] `GET /api/board` — the session user's board
+- [x] `PUT /api/board` — replace the board, validated against the models
+- [x] All board routes behind the Part 4 auth dependency
+- [x] Persist the SQLite file to a mounted volume so it survives `stop` then `start`
 
 **Tests.** pytest against a temporary DB: DB and schema are created when absent; a new user gets a seeded
 board; `GET /api/board` returns it; `PUT` then `GET` round-trips; malformed board JSON returns 422; both

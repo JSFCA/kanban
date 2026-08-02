@@ -140,11 +140,18 @@ npm run test:all    # both
 vitest runs in jsdom with globals enabled (`describe`/`it`/`expect` need no import) and explicitly excludes
 `tests/` so Playwright specs are not picked up.
 
-[playwright.config.ts](playwright.config.ts) runs against the **container**, not `next dev`: `webServer`
-invokes `../scripts/start.sh` and waits on `/api/health`, with `baseURL` at `http://localhost:8000`. So e2e
-tests exercise the real static export served by FastAPI. A cold run pays for a Docker build;
-`reuseExistingServer` keeps warm runs fast, which also means a stale container is reused silently — run
-`scripts/stop.sh` first if you need certainty.
+[playwright.config.ts](playwright.config.ts) runs against the **container**, not `next dev`, with `baseURL`
+at `http://localhost:8000`. [global-setup.ts](global-setup.ts) runs `scripts/start.sh` before the suite, so
+e2e exercises the real static export served by FastAPI. A cold run pays for a Docker build.
+
+**Do not move this back to Playwright's `webServer` option.** It expects a long-lived foreground process
+and fails with "Process from config.webServer exited early" when the command returns first — which
+`start.sh` always does, since it launches a detached container and exits once `/api/health` answers. Under
+`webServer` the suite failed intermittently on completely healthy starts, depending on whether Playwright's
+URL poll landed before the script exited. Tracing showed the script exiting 0 with the app up while
+Playwright still reported the error.
+
+The container is left running afterwards; run `scripts/stop.sh` when you want a guaranteed-fresh build.
 
 ## Build
 

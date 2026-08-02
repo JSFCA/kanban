@@ -50,6 +50,9 @@ cache. Fix with `sudo chown -R $(whoami) ~/.npm`, or bypass it with `npm ci --ca
 - `OPENROUTER_API_KEY` — required for the AI features
 - `SESSION_SECRET` — optional; signs the session cookie. Falls back to a local development default
 
+The SQLite database is written to `data/kanban.db`, which `start` bind-mounts into the container. It is
+created and seeded on first run, gitignored, and survives rebuilds. Delete the directory for a clean slate.
+
 ## Docs
 
 - [CLAUDE.md](CLAUDE.md) — requirements, technical decisions, standards

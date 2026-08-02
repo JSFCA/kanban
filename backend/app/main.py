@@ -1,10 +1,14 @@
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
+
+from app.db import DEFAULT_DB_PATH, initialise, load_board, save_board
+from app.models import BoardData
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
@@ -35,8 +39,16 @@ def require_user(request: Request) -> User:
     return User(username=username)
 
 
-def create_app(static_dir: Path = STATIC_DIR) -> FastAPI:
-    app = FastAPI(title="Kanban Studio")
+def create_app(
+    static_dir: Path = STATIC_DIR, db_path: Path = DEFAULT_DB_PATH
+) -> FastAPI:
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        # On startup, not at import: importing this module must not touch disk.
+        initialise(db_path, USERNAME)
+        yield
+
+    app = FastAPI(title="Kanban Studio", lifespan=lifespan)
     app.add_middleware(
         SessionMiddleware, secret_key=SESSION_SECRET, same_site="lax"
     )
@@ -63,6 +75,17 @@ def create_app(static_dir: Path = STATIC_DIR) -> FastAPI:
     @app.get("/api/me")
     def me(user: User = Depends(require_user)) -> User:
         return user
+
+    @app.get("/api/board")
+    def get_board(user: User = Depends(require_user)) -> BoardData:
+        return load_board(db_path, user.username)
+
+    @app.put("/api/board")
+    def put_board(
+        board: BoardData, user: User = Depends(require_user)
+    ) -> BoardData:
+        save_board(db_path, user.username, board)
+        return board
 
     # Mounted last so API routes take precedence. check_dir is off because the
     # build output only exists inside the image, not in a host checkout.

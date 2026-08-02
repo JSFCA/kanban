@@ -15,3 +15,8 @@ Notes:
   run time and is never baked into the image. It warns rather than fails if `.env` is absent.
 - Override the host port with the `PORT` environment variable.
 - `test` bind-mounts the source instead of using the app image, so it picks up edits without a rebuild.
+- `start` bind-mounts `./data` to `/app/data` so the SQLite database outlives the container, and creates
+  the directory first because Docker would otherwise create it root-owned.
+- `start`'s health poll allows 120s. It is the script's only early-exit path, so when it is too short the
+  symptom is Playwright reporting "webServer exited early" — which says nothing about the real cause.
+  Do not shorten it.

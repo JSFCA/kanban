@@ -11,3 +11,5 @@ scripts
 **/.pytest_cache
 **/.venv
 *.db
+data
+backend/data
