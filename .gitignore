@@ -174,3 +174,7 @@ cython_debug/
 
 .DS_Store
 
+
+# Runtime state, not source
+/data/
+backend/data/

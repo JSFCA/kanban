@@ -6,7 +6,10 @@ the app only ever runs inside the container.
 ## Layout
 
 ```
-app/main.py       create_app factory: routes, static mount
+app/main.py       create_app factory: routes, static mount, lifespan
+app/db.py         connection helper, schema, load_board / save_board
+app/models.py     Card, Column, BoardData with their invariant
+app/seed.py       the demo board a new user starts with
 tests/            pytest suites
 pyproject.toml    dependencies and pytest config
 uv.lock           pinned versions, committed
@@ -40,6 +43,24 @@ development default). The MVP account is hardcoded as `USERNAME` / `PASSWORD` in
   sign in.
 - The frontend is a static export, so the HTML shell is served to everyone. The login screen is a
   presentation gate; the real boundary is `require_user` on the API.
+
+## Database
+
+SQLite at `/app/data/kanban.db`, bind-mounted from `./data` on the host. Design and reasoning are in
+[../docs/DATABASE.md](../docs/DATABASE.md).
+
+- **Always open connections through `db.connect()`.** `PRAGMA foreign_keys` is per-connection, so a
+  connection opened any other way silently loses referential integrity. Proven, not theoretical — see
+  `test_foreign_keys_are_enforced_on_every_connection`.
+- The schema is created in the FastAPI **lifespan**, not at import. Importing `app.main` must never touch
+  disk, which is also why tests use `with TestClient(app)` — the schema is created when startup runs.
+- `boards` has no `UNIQUE(user_id)` on purpose, so queries use
+  `WHERE user_id = ? ORDER BY id LIMIT 1`. Never assume a user has exactly one row.
+- `BoardData` validates that every `cardIds` entry resolves to a real card. The board is one JSON blob, so
+  the database cannot express that with a foreign key; the model is the only thing enforcing it. Part 9
+  relies on this to reject bad AI output.
+- `app/seed.py` mirrors `initialData` in the frontend. Change one and change the other until Part 7 makes
+  the backend the only source.
 
 ## Running
 
