@@ -14,7 +14,8 @@ scripts/start.sh     # Mac and Linux
 scripts/start.ps1    # Windows
 ```
 
-Then open http://localhost:8000. Stop with `scripts/stop.sh` or `scripts/stop.ps1`.
+Then open http://localhost:8000 and sign in with `user` / `password`. Stop with `scripts/stop.sh` or
+`scripts/stop.ps1`.
 
 ## Test
 
@@ -44,7 +45,10 @@ cache. Fix with `sudo chown -R $(whoami) ~/.npm`, or bypass it with `npm ci --ca
 
 ## Configuration
 
-`OPENROUTER_API_KEY` in `.env` at the project root. `start` passes it to the container at run time.
+`.env` at the project root, passed to the container at run time by `start`:
+
+- `OPENROUTER_API_KEY` — required for the AI features
+- `SESSION_SECRET` — optional; signs the session cookie. Falls back to a local development default
 
 ## Docs
 

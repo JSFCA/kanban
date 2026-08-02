@@ -29,6 +29,18 @@ There is no `static/` directory in the repository. Docker builds the Next.js exp
   work.
 - `httpx2` is the dev dependency, not `httpx` — Starlette's `TestClient` deprecates the latter.
 
+## Auth
+
+`SessionMiddleware` signs an HttpOnly `session` cookie with `SESSION_SECRET` (env var, with a local
+development default). The MVP account is hardcoded as `USERNAME` / `PASSWORD` in `app/main.py`.
+
+- Any route that returns user data must take `user: User = Depends(require_user)`. That dependency raises
+  401 when the session is empty. Forgetting it is the way this app leaks data.
+- `/api/health` stays public on purpose: `start.sh` and Playwright's `webServer` poll it before anyone can
+  sign in.
+- The frontend is a static export, so the HTML shell is served to everyone. The login screen is a
+  presentation gate; the real boundary is `require_user` on the API.
+
 ## Running
 
 ```

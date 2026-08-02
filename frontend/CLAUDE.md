@@ -15,12 +15,26 @@ change that.
 ## Layout
 
 ```
-src/app/          layout.tsx (fonts, metadata), page.tsx (renders KanbanBoard), globals.css
-src/components/   KanbanBoard, KanbanColumn, KanbanCard, KanbanCardPreview, NewCardForm
-src/lib/kanban.ts types, seed data, moveCard(), createId()
+src/app/          layout.tsx (fonts, metadata), page.tsx (renders AuthGate), globals.css
+src/components/   AuthGate, LoginForm, KanbanBoard, KanbanColumn, KanbanCard,
+                  KanbanCardPreview, NewCardForm
+src/lib/kanban.ts types, seed data, moveCard(), updateCard(), createId()
+src/lib/api.ts    typed calls to /api: fetchMe, login, logout
 src/test/setup.ts imports @testing-library/jest-dom
 tests/            Playwright specs
 ```
+
+## Auth
+
+`AuthGate` is the root component. It calls `fetchMe()` on mount and renders a loading state, then either
+`LoginForm` or `KanbanBoard`. Signing out clears the cookie via `logout()` and drops back to the form.
+
+`fetchMe()` returns `null` for 401 rather than throwing, so the gate can branch without a try/catch.
+Requests use `credentials: "same-origin"` — the site is served by the same process that owns `/api`, so
+the session cookie rides along.
+
+This gate is presentation only. The HTML is a static export served to everyone; what actually protects
+data is `require_user` on the API.
 
 `test-results/` is stray Playwright output, not source.
 
@@ -105,7 +119,15 @@ Fonts are Space Grotesk (`--font-display`, applied via the `.font-display` class
 so the Docker build stage needs network access.
 
 Stable selectors for tests: `data-testid="column-<columnId>"`, `data-testid="card-<cardId>"`,
-`aria-label="Column title"`, `aria-label="Delete <card title>"`.
+`aria-label="Column title"`, `aria-label="Card title"`, `aria-label="Card details"`,
+`aria-label="Delete <card title>"`.
+
+Two gotchas when asserting which screen is showing:
+
+- Both `LoginForm` and `KanbanBoard` render an `<h1>Kanban Studio</h1>`, so that heading cannot tell them
+  apart. Assert on `data-testid^="column-"` instead.
+- Next injects its own route-announcer element with `role="alert"`, so a bare `getByRole("alert")` matches
+  two nodes and trips Playwright's strict mode. Scope it, e.g. `page.locator("form").getByRole("alert")`.
 
 ## Tests
 
