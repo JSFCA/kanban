@@ -124,12 +124,13 @@ survives a reload, logout works.
 
 **Goal.** An agreed SQLite schema, documented and signed off before any DB code is written.
 
-- [ ] `docs/DATABASE.md`: tables, columns, types, keys, constraints, and the reasoning
-- [ ] `users` table — supports multiple users even though the MVP hardcodes one
-- [ ] `boards` table — one row per user for the MVP, but keyed so more are possible later; board content stored as a JSON column matching `BoardData` (`columns` + `cards`)
-- [ ] Document why JSON rather than normalized card/column tables, and what that costs
-- [ ] Document creation-on-startup behaviour and where the file lives (a Docker volume, so data survives a container rebuild)
-- [ ] Sample JSON document matching the frontend's `BoardData`
+- [x] `docs/DATABASE.md`: tables, columns, types, keys, constraints, and the reasoning
+- [x] `users` table — supports multiple users even though the MVP hardcodes one
+- [x] `boards` table — one row per user for the MVP, but keyed so more are possible later; board content stored as a JSON column matching `BoardData` (`columns` + `cards`)
+- [x] Document why JSON rather than normalized card/column tables, and what that costs
+- [x] Document creation-on-startup behaviour and where the file lives (a bind mount at `./data`, so data survives a container rebuild)
+- [x] Sample JSON document matching the frontend's `BoardData`
+- [x] Schema executed against real SQLite to confirm the constraints behave as documented
 - [ ] **User signs off before Part 6**
 
 **Tests.** None (documentation).
