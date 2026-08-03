@@ -943,3 +943,121 @@ Every end-to-end test now performs a change, reloads the page, and asserts it is
 The first AI call. The backend gains an OpenRouter client and a single endpoint that asks the model what
 2+2 is — no board, no context, nothing clever. Proving the connection, the API key and the error handling
 work in isolation is much easier before there is a prompt to blame.
+
+---
+
+## Part 8: the first AI call
+
+### What an API call to a model actually is
+
+Nothing exotic. OpenRouter exposes an HTTP endpoint; you POST some JSON naming a model and a list of
+messages, and you get JSON back. The whole client is forty lines:
+
+```python
+response = await client.post(
+    "https://openrouter.ai/api/v1/chat/completions",
+    headers={"Authorization": f"Bearer {api_key()}"},
+    json={"model": MODEL, "messages": messages},
+)
+return response.json()["choices"][0]["message"]["content"]
+```
+
+The `Authorization: Bearer <key>` header is how the service knows who is paying. That is also why the key
+never goes into the image: anyone who can pull the image could read it. It lives in `.env` on the host and
+Docker injects it at run time with `--env-file`, which is what `start.sh` has been doing since Part 2 —
+Part 8 is simply the first part that uses it.
+
+### Failing loudly at startup
+
+The app now refuses to start without `OPENROUTER_API_KEY`:
+
+```python
+if not ai.api_key():
+    raise RuntimeError("OPENROUTER_API_KEY is not set. ...")
+```
+
+The alternative is a container that starts happily and only breaks when someone opens the chat. A
+misconfiguration should surface at the moment of misconfiguration, not hours later in front of a user.
+
+The check sits in the **lifespan**, the same place as schema creation, and for the same reason given in
+Part 6: importing a module must not have opinions about the world. Tests import `create_app` constantly.
+
+### 502, not 500
+
+When OpenRouter fails, the route answers **502 Bad Gateway**, not 500.
+
+The distinction is worth internalising. 500 means *this server is broken*. 502 means *this server is fine,
+but the thing it depends on is not*. Anyone debugging a 502 knows immediately to look upstream. Choosing
+the right status code is free documentation.
+
+### Tests that really call the model
+
+The plan originally said to mock the HTTP call. That was reversed: these tests call OpenRouter for real.
+
+The argument is simple. The entire point of Part 8 is proving the backend can reach OpenRouter. A mocked
+call proves only that we can write a mock — it would pass just as happily with a wrong URL, a wrong header
+or an expired key. Even the failure path is real: one test sets a deliberately invalid key, OpenRouter
+genuinely answers 401, and the test asserts our route turns that into a 502.
+
+The trade-off is real too, and worth stating plainly. The test suite now needs the network, needs a valid
+key, and spends free-tier quota on every run. Free models are rate-limited per minute and per day, so a
+long debugging session can exhaust the daily allowance and leave the suite failing for reasons that have
+nothing to do with the code. That is the price of testing the thing itself instead of a drawing of it.
+
+### The lying environment
+
+The tests passed. The container crash-looped:
+
+```
+File "/app/app/ai.py", line 5, in <module>
+    import httpx
+ModuleNotFoundError: No module named 'httpx'
+```
+
+The package this project uses is called `httpx2`, and it installs under the name `httpx2`. Writing
+`import httpx` was simply wrong. The interesting question is why four tests passed against code that could
+not import.
+
+`scripts/test.sh` bind-mounts `backend/` into the test container, so the virtual environment inside it
+lives on the host and **persists between runs**. That directory had picked up a stale `httpx 0.28.1` from
+some earlier experiment — a package that appears nowhere in `uv.lock`. The tests were running against an
+environment that no longer matched the lockfile, and it happened to contain exactly the module the broken
+import needed.
+
+Deleting `backend/.venv` and re-running rebuilt it from the lockfile alone. Twenty-eight tests still
+passed, this time honestly.
+
+The lesson is bigger than one typo. A lockfile describes the environment your code is *supposed* to run
+in; a long-lived virtual environment describes what has accumulated in it. When those two disagree, tests
+tell you about the second one, and the deployed container finds out about the first. If something passes
+locally and fails in the container, suspect the environment before the code.
+
+It also shows why CLAUDE.md insists that automated tests are never enough to close a part. The suite was
+green. The application did not start.
+
+### Why this one route is async
+
+Every other route is a plain `def`. FastAPI runs those in a threadpool, which is right for SQLite: the
+queries are sub-millisecond and blocking briefly costs nothing.
+
+An AI call is different. It can take tens of seconds — the timeout here is 30 — and a sync route would
+hold a worker for the entire wait. `async def` lets the server hand that time back and serve other requests
+while it waits. The rule of thumb: blocking on a network you do not control belongs in `async`.
+
+### Test counts after Part 8
+
+```
+28  backend            pytest      (2 of them call OpenRouter for real)
+22  frontend unit      vitest
+12  end to end         playwright
+```
+
+The new tests are: the route rejects a stranger, the payload names the right model, a live call answers 4,
+and a bad key becomes a 502. The timeout path is deliberately untested — it cannot be triggered honestly
+without the mocking this part rejected, so the gap is written down rather than papered over.
+
+### What Part 9 changes
+
+The AI gets to see the board. That needs the model to return something structured enough to save, which
+this model cannot do through the usual `response_format` mechanism — so Part 9 uses a forced tool call
+instead, and leans on the `BoardData` validation built back in Part 6 to reject anything malformed.
