@@ -7,6 +7,7 @@ the app only ever runs inside the container.
 
 ```
 app/main.py       create_app factory: routes, static mount, lifespan
+app/ai.py         OpenRouter client: no FastAPI, no retries
 app/db.py         connection helper, schema, load_board / save_board
 app/models.py     Card, Column, BoardData with their invariant
 app/seed.py       the demo board a new user starts with
@@ -30,7 +31,13 @@ There is no `static/` directory in the repository. Docker builds the Next.js exp
 - Tests call `create_app(tmp_path)` with a fixture directory rather than importing the module-level `app`,
   which keeps static-serving assertions hermetic. `pythonpath = ["."]` in `pyproject.toml` makes the import
   work.
-- `httpx2` is the dev dependency, not `httpx` — Starlette's `TestClient` deprecates the latter.
+- **The HTTP package is `httpx2` and it imports as `httpx2`.** There is no top-level `httpx` in the image;
+  Starlette's `TestClient` deprecates the older package. It is a production dependency as of Part 8, not a
+  dev one, because `app/ai.py` uses it at run time.
+- **`backend/.venv` lives on the host and survives between test runs**, because `scripts/test.sh`
+  bind-mounts `backend/`. It can drift from `uv.lock` — a stale `httpx` in there let `import httpx` pass 28
+  tests while the container crash-looped on the same line. When the tests and the container disagree,
+  `rm -rf backend/.venv` and run again before suspecting the code.
 
 ## Auth
 
@@ -60,6 +67,25 @@ SQLite at `/app/data/kanban.db`, bind-mounted from `./data` on the host. Design 
   the database cannot express that with a foreign key; the model is the only thing enforcing it. Part 9
   relies on this to reject bad AI output.
 - `app/seed.py` is the only source of the demo board. The frontend's `initialData` was deleted in Part 7.
+
+## AI
+
+`app/ai.py` wraps one OpenRouter endpoint. Model `nvidia/nemotron-3-ultra-550b-a55b:free`, 30s timeout, no
+retries. `POST /api/ai/ping` is the Part 8 smoke route.
+
+- **The app refuses to start without `OPENROUTER_API_KEY`.** The check is in the lifespan, next to
+  `initialise`, so importing the module still touches nothing. `start.sh` and `test.sh` both pass the
+  project-root `.env`, and both fail with a clear message if it is absent.
+- **`ai.api_key()` reads the environment per call, not at import.** That is what lets a test monkeypatch a
+  bad key and exercise the real failure path through the real route.
+- **`AIError` is the only error type; the route maps it to 502**, not 500 — the upstream failed, not us.
+- **AI routes are `async def`**, unlike everything else here. A 30s outbound call would otherwise hold a
+  threadpool worker for its whole duration.
+- **The tests call OpenRouter for real. Nothing in `tests/test_ai.py` is mocked**, including the failure
+  path, which uses a deliberately invalid key. The suite therefore needs the network, a valid key, and
+  free-tier quota; `:free` is rate-limited per minute and per day, so a long debugging session can exhaust
+  the day's allowance and fail the suite for reasons unrelated to the code.
+- The timeout path is untested on purpose — forcing it needs a mock. Say so, do not hide it.
 
 ## Running
 

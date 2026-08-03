@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.sessions import SessionMiddleware
 
+from app import ai
 from app.db import DEFAULT_DB_PATH, initialise, load_board, save_board
 from app.models import BoardData
 
@@ -46,6 +47,11 @@ def create_app(
     async def lifespan(_: FastAPI):
         # On startup, not at import: importing this module must not touch disk.
         initialise(db_path, USERNAME)
+        if not ai.api_key():
+            raise RuntimeError(
+                "OPENROUTER_API_KEY is not set. Put it in the project-root .env; "
+                "scripts/start.sh and scripts/test.sh pass that file to the container."
+            )
         yield
 
     app = FastAPI(title="Kanban Studio", lifespan=lifespan)
@@ -86,6 +92,16 @@ def create_app(
     ) -> BoardData:
         save_board(db_path, user.username, board)
         return board
+
+    # async, unlike the routes above: an outbound call can take up to 30
+    # seconds, and a sync route would hold a threadpool worker for all of it.
+    @app.post("/api/ai/ping")
+    async def ai_ping(user: User = Depends(require_user)) -> dict[str, str]:
+        try:
+            reply = await ai.complete([{"role": "user", "content": "What is 2+2?"}])
+        except ai.AIError as error:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(error))
+        return {"reply": reply}
 
     # Mounted last so API routes take precedence. check_dir is off because the
     # build output only exists inside the image, not in a host checkout.

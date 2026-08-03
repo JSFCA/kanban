@@ -32,11 +32,11 @@ For the MVP, this will run locally (in a docker container)
 
 ## Current state
 
-Parts 1-7 of docs/PLAN.md are complete and merged to main. The app runs in one container: sign in at
-http://localhost:8000 with `user` / `password`, and the Kanban board persists to SQLite.
+Parts 1-8 of docs/PLAN.md are complete and merged to main. The app runs in one container: sign in at
+http://localhost:8000 with `user` / `password`, and the Kanban board persists to SQLite. The backend reaches
+OpenRouter through `POST /api/ai/ping`, and refuses to start without `OPENROUTER_API_KEY`.
 
-Remaining: Part 8 (OpenRouter connectivity), Part 9 (AI over the board via a forced tool call), Part 10
-(AI chat sidebar).
+Remaining: Part 9 (AI over the board via a forced tool call), Part 10 (AI chat sidebar).
 
 The frontend began as a standalone demo. It is now statically exported and served by FastAPI, with card
 editing, session auth, and all five mutations persisted through the API.
@@ -80,3 +80,7 @@ automatically when working in those directories and carry the gotchas worth know
 
 Never claim something passes without showing the output. Do not filter test output through `grep` while
 diagnosing a failure — that hid the cause of a real bug for three parts.
+
+From Part 8 the AI tests call OpenRouter for real, with no mocking, so the backend suite needs `.env` and a
+network. A green suite still does not close a part: in Part 8 all 28 tests passed against a stale local
+virtualenv while the container could not start.

@@ -8,19 +8,22 @@ CONTAINER="kanban-studio"
 PORT="${PORT:-8000}"
 
 cd "$ROOT"
+
+# The app refuses to start without OPENROUTER_API_KEY. Say so now rather than
+# building an image and then spending 120s watching the container crash-loop.
+if [ ! -f "$ROOT/.env" ]; then
+  echo "No .env found at $ROOT/.env. It must contain OPENROUTER_API_KEY." >&2
+  exit 1
+fi
+
 docker build -t "$IMAGE" .
 docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
 
 # The database lives on the host so it survives rebuilding the image.
 mkdir -p "$ROOT/data"
 
-if [ -f "$ROOT/.env" ]; then
-  docker run -d --name "$CONTAINER" -p "$PORT:8000" \
-    -v "$ROOT/data":/app/data --env-file "$ROOT/.env" "$IMAGE"
-else
-  echo "Warning: no .env found; OPENROUTER_API_KEY will not be set." >&2
-  docker run -d --name "$CONTAINER" -p "$PORT:8000" -v "$ROOT/data":/app/data "$IMAGE"
-fi
+docker run -d --name "$CONTAINER" -p "$PORT:8000" \
+  -v "$ROOT/data":/app/data --env-file "$ROOT/.env" "$IMAGE"
 
 # Generous budget on purpose. The only way this script can exit before the app
 # is reachable is by exhausting this loop, and a machine that has just finished

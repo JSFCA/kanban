@@ -17,11 +17,11 @@ See [../CLAUDE.md](../CLAUDE.md) for requirements and standards, and
 | 5 Database design | Done, signed off |
 | 6 Board persisted in SQLite | Done |
 | 7 Frontend reads and writes through the API | Done |
-| 8 AI connectivity | Not started |
+| 8 AI connectivity | Done |
 | 9 AI over the board | Not started |
 | 10 AI sidebar | Not started |
 
-All merged to main. 58 tests: 24 backend, 22 frontend unit, 12 end to end.
+All merged to main. 62 tests: 28 backend, 22 frontend unit, 12 end to end.
 
 Start the app with `scripts/start.sh` and sign in as `user` / `password`.
 
@@ -45,7 +45,16 @@ structured outputs. We stay on `:free` and get schema-enforced output through **
 whose parameters are the response schema, with `tool_choice` forcing the call.
 
 **Verification.** Every part: `vitest` + `pytest` + `playwright` green, **and** the container started and
-the feature used in a browser. Automated tests alone are not sufficient to close a part.
+the feature used in a browser. Automated tests alone are not sufficient to close a part. Part 8 proved the
+point: 28 tests passed while the container could not start.
+
+**AI tests call OpenRouter for real.** Part 8 originally specified mocked HTTP with a separate manual live
+call; the user reversed that. The point of the AI parts is that the backend reaches OpenRouter, and a mock
+passes just as happily with a wrong URL, header or expired key. Even the failure path is live: an invalid
+key produces a real 401, which the route maps to 502. The cost, accepted knowingly: the suite needs network
+and a valid `.env`, and spends free-tier quota on every run. The `:free` tier is rate-limited per minute and
+per day, and Parts 8-10 share that budget — an exhausted quota fails the suite for reasons unrelated to the
+code.
 
 ## Constraints later parts must respect
 
@@ -62,6 +71,9 @@ Learned while building Parts 2-7. Each one is cheap to honour and expensive to r
 - **Validate what the JSON column cannot.** `BoardData` rejects `cardIds` naming a missing card. Part 9
   depends on this to reject bad AI output.
 - **Query boards with `ORDER BY id LIMIT 1`.** The schema deliberately allows more than one per user.
+- **The HTTP package is `httpx2` and imports as `httpx2`.** There is no top-level `httpx` in the image.
+- **`backend/.venv` is bind-mounted and persists between test runs.** It drifted from `uv.lock` and hid a
+  broken import for a whole test run. Delete it when the container and the tests disagree.
 - **Playwright uses `globalSetup`, not `webServer`.** `webServer` expects a long-lived foreground process
   and fails intermittently against `start.sh`, which returns once the container is up.
 - **E2E runs serially and resets the board per test.** The board persists, so tests share mutable state.
@@ -227,16 +239,21 @@ restarting preserves board changes made through the API.
 
 **Goal.** Prove the backend can reach OpenRouter.
 
-- [ ] `OPENROUTER_API_KEY` loaded from the environment; startup fails with a clear message if it is missing
-- [ ] A small OpenRouter client module in `backend/`, model `nvidia/nemotron-3-ultra-550b-a55b:free`
-- [ ] `POST /api/ai/ping` (auth-protected) sending a fixed "what is 2+2" prompt and returning the reply
-- [ ] Sensible timeout, and upstream errors surfaced as a clean 502 rather than a stack trace
+- [x] `OPENROUTER_API_KEY` loaded from the environment; startup fails with a clear message if it is missing
+- [x] A small OpenRouter client module in `backend/`, model `nvidia/nemotron-3-ultra-550b-a55b:free`
+- [x] `POST /api/ai/ping` (auth-protected) sending a fixed "what is 2+2" prompt and returning the reply
+- [x] Sensible timeout (30s), and upstream errors surfaced as a clean 502 rather than a stack trace
+- [x] `scripts/test.sh` / `.ps1` pass `.env` to the container; `start.sh` / `.ps1` fail fast without it
 
-**Tests.** pytest with the HTTP call mocked: the request carries the right model, auth header and messages;
-an upstream error becomes a 502; the route needs auth. Plus one manual live call confirming a real answer of
-4 — record the result, do not put a network-dependent test in the suite.
+**Tests.** pytest calling OpenRouter for real, no mocking: the route needs auth; `build_payload` names the
+right model and messages; a live call answers 4; an invalid key produces a real 401 upstream and a 502 from
+us. The timeout path is not tested — it cannot be forced without a mock, and the gap is recorded in the test
+module rather than hidden.
 
-**Success criteria.** Mocked tests pass, and a real call against OpenRouter returns 4.
+**Success criteria.** All 28 backend tests pass, and the route returns 4 from a real browser session.
+
+**Result.** `{"reply": "2 + 2 = 4"}`, 200, from a signed-in Chromium session against the running container.
+A round trip takes about 1.3s.
 
 ---
 

@@ -7,6 +7,15 @@ $Container = "kanban-studio"
 $Port = if ($env:PORT) { $env:PORT } else { "8000" }
 
 Set-Location $Root
+
+# The app refuses to start without OPENROUTER_API_KEY. Say so now rather than
+# building an image and then spending 120s watching the container crash-loop.
+$EnvFile = Join-Path $Root ".env"
+if (-not (Test-Path $EnvFile)) {
+    Write-Error "No .env found at $EnvFile. It must contain OPENROUTER_API_KEY."
+    exit 1
+}
+
 docker build -t $Image .
 docker rm -f $Container 2>$null | Out-Null
 
@@ -14,14 +23,8 @@ docker rm -f $Container 2>$null | Out-Null
 $DataDir = Join-Path $Root "data"
 New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
 
-$EnvFile = Join-Path $Root ".env"
-if (Test-Path $EnvFile) {
-    docker run -d --name $Container -p "${Port}:8000" `
-        -v "${DataDir}:/app/data" --env-file $EnvFile $Image
-} else {
-    Write-Warning "No .env found; OPENROUTER_API_KEY will not be set."
-    docker run -d --name $Container -p "${Port}:8000" -v "${DataDir}:/app/data" $Image
-}
+docker run -d --name $Container -p "${Port}:8000" `
+    -v "${DataDir}:/app/data" --env-file $EnvFile $Image
 
 # Generous budget on purpose; see the note in start.sh.
 foreach ($attempt in 1..120) {

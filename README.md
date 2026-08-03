@@ -19,7 +19,8 @@ Then open http://localhost:8000 and sign in with `user` / `password`. Stop with 
 
 ## Test
 
-Backend. Needs nothing installed; pytest runs inside the uv image.
+Backend. Needs nothing installed; pytest runs inside the uv image. Needs `.env` and a network, though: the
+AI tests call OpenRouter for real.
 
 ```
 scripts/test.sh      # Mac and Linux
@@ -38,7 +39,7 @@ npm run test:e2e    # end to end, playwright
 npm run test:all    # both
 ```
 
-58 tests in total: 24 backend, 22 frontend unit, 12 end to end.
+62 tests in total: 28 backend, 22 frontend unit, 12 end to end.
 
 The end-to-end suite starts the container itself and runs serially, because the board is persisted and the
 tests share it. Run `scripts/stop.sh` first if you want a guaranteed-fresh build.
@@ -50,7 +51,8 @@ cache. Fix with `sudo chown -R $(whoami) ~/.npm`, or bypass it with `npm ci --ca
 
 `.env` at the project root, passed to the container at run time by `start`:
 
-- `OPENROUTER_API_KEY` — required for the AI features
+- `OPENROUTER_API_KEY` — required. The app refuses to start without it, and `start` and `test` both refuse
+  to run without the file
 - `SESSION_SECRET` — optional; signs the session cookie. Falls back to a local development default
 
 The SQLite database is written to `data/kanban.db`, which `start` bind-mounts into the container. It is
