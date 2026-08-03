@@ -49,8 +49,8 @@ type BoardData = { columns: Column[]; cards: Record<string, Card> };
 ```
 
 Cards are stored flat in `cards` and referenced by id from `column.cardIds` — ordering lives on the column.
-`initialData` seeds five columns (`col-backlog`, `col-discovery`, `col-progress`, `col-review`, `col-done`)
-and eight cards.
+The demo board a new user starts with is defined once, in [backend/app/seed.py](../backend/app/seed.py);
+the frontend has no seed data of its own.
 
 `moveCard(columns, activeId, overId)` is a pure function covering reorder-within-column, move-to-another-
 column, and drop-on-empty-column (when `overId` is a column id). `updateCard(cards, cardId, fields)` is the
@@ -59,16 +59,17 @@ and never mutates. Both are directly unit tested in [src/lib/kanban.test.ts](src
 them pure and keep them as the seam — backend integration should call them and send the result, not
 reimplement the logic.
 
-`createId(prefix)` returns `prefix-<random><timestamp>`, base36. Once the backend owns ids, this is the
-thing to replace.
+`createId(prefix)` returns `prefix-<random><timestamp>`, base36. Ids are still minted in the browser; the
+backend stores whatever it is sent.
 
 ## State
 
 [src/components/KanbanBoard.tsx](src/components/KanbanBoard.tsx) is the only stateful component: one
-`useState<BoardData>` seeded from `initialData`, plus `activeCardId` for the drag overlay. It is a client
-component (`"use client"`); everything below it is presentational and takes callbacks.
+`useState<BoardData | null>` loaded from `GET /api/board`, plus `error` and `activeCardId` for the drag
+overlay. It is a client component (`"use client"`); everything below it is presentational and takes
+callbacks.
 
-The four mutation points, all in `KanbanBoard.tsx`:
+The five mutation points, all in `KanbanBoard.tsx`:
 
 | Handler | Triggered by |
 |---|---|
@@ -173,7 +174,6 @@ Node.js ships to production, and `out/` is gitignored — the build output never
 
 ## Known gaps
 
-- No persistence; a refresh resets to `initialData` (Parts 6-7)
-- No auth (Part 4)
 - No AI sidebar (Part 10)
-- Column rename fires on every keystroke, so it will need debouncing or blur-commit once it writes to the API
+- Saving is last-write-wins: the whole board is replaced on every change, so a concurrent edit silently
+  overwrites. Part 10 makes that reachable, since the AI and the user can both change the board

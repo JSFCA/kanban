@@ -39,8 +39,8 @@ development default). The MVP account is hardcoded as `USERNAME` / `PASSWORD` in
 
 - Any route that returns user data must take `user: User = Depends(require_user)`. That dependency raises
   401 when the session is empty. Forgetting it is the way this app leaks data.
-- `/api/health` stays public on purpose: `start.sh` and Playwright's `webServer` poll it before anyone can
-  sign in.
+- `/api/health` stays public on purpose: `start.sh` polls it before anyone can sign in, and Playwright's
+  global setup waits on it.
 - The frontend is a static export, so the HTML shell is served to everyone. The login screen is a
   presentation gate; the real boundary is `require_user` on the API.
 

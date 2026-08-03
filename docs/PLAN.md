@@ -4,7 +4,26 @@ Ten parts, executed in order. Each part is finished only when its checklist is c
 and the running app has been exercised by hand. Do not start a part before the previous one is signed off.
 
 See [../CLAUDE.md](../CLAUDE.md) for requirements and standards, and
-[../frontend/CLAUDE.md](../frontend/CLAUDE.md) for the existing frontend.
+[../frontend/CLAUDE.md](../frontend/CLAUDE.md) for the frontend.
+
+## Status
+
+| Part | State |
+|---|---|
+| 1 Plan | Done |
+| 2 Scaffolding | Done |
+| 3 Frontend served by FastAPI, card editing | Done |
+| 4 Session-cookie sign in | Done |
+| 5 Database design | Done, signed off |
+| 6 Board persisted in SQLite | Done |
+| 7 Frontend reads and writes through the API | Done |
+| 8 AI connectivity | Not started |
+| 9 AI over the board | Not started |
+| 10 AI sidebar | Not started |
+
+All merged to main. 58 tests: 24 backend, 22 frontend unit, 12 end to end.
+
+Start the app with `scripts/start.sh` and sign in as `user` / `password`.
 
 ## Decisions
 
@@ -27,6 +46,28 @@ whose parameters are the response schema, with `tool_choice` forcing the call.
 
 **Verification.** Every part: `vitest` + `pytest` + `playwright` green, **and** the container started and
 the feature used in a browser. Automated tests alone are not sufficient to close a part.
+
+## Constraints later parts must respect
+
+Learned while building Parts 2-7. Each one is cheap to honour and expensive to rediscover.
+
+- **Register API routes before the `StaticFiles` mount** in `create_app`. The mount at `/` is a catch-all;
+  anything after it is unreachable.
+- **Any route returning user data needs `Depends(require_user)`.** Omitting it is silent — the route simply
+  works for strangers. The login screen is presentation only; the API is the security boundary.
+- **Open SQLite connections through `db.connect()`.** `PRAGMA foreign_keys` is per-connection, so any other
+  route to a connection loses referential integrity.
+- **Do not touch disk at import time.** Schema creation belongs in the FastAPI lifespan. Two bugs have come
+  from import-time side effects already.
+- **Validate what the JSON column cannot.** `BoardData` rejects `cardIds` naming a missing card. Part 9
+  depends on this to reject bad AI output.
+- **Query boards with `ORDER BY id LIMIT 1`.** The schema deliberately allows more than one per user.
+- **Playwright uses `globalSetup`, not `webServer`.** `webServer` expects a long-lived foreground process
+  and fails intermittently against `start.sh`, which returns once the container is up.
+- **E2E runs serially and resets the board per test.** The board persists, so tests share mutable state.
+- **Accessible names are computed.** dnd-kit makes each card `role="button"` whose name swallows its inner
+  text, Playwright matches names by substring while Testing Library matches exactly, and `aria-label`
+  overrides visible text. Scope locators and pass `exact: true`.
 
 ---
 

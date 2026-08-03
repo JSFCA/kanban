@@ -38,7 +38,10 @@ npm run test:e2e    # end to end, playwright
 npm run test:all    # both
 ```
 
-12 tests in total: 3 backend, 6 frontend unit, 3 end to end.
+58 tests in total: 24 backend, 22 frontend unit, 12 end to end.
+
+The end-to-end suite starts the container itself and runs serially, because the board is persisted and the
+tests share it. Run `scripts/stop.sh` first if you want a guaranteed-fresh build.
 
 If `npm ci` fails with `EACCES` in `~/.npm/_cacache`, a past `sudo npm` left root-owned files in the
 cache. Fix with `sudo chown -R $(whoami) ~/.npm`, or bypass it with `npm ci --cache /tmp/npm-cache`.
@@ -56,5 +59,7 @@ created and seeded on first run, gitignored, and survives rebuilds. Delete the d
 ## Docs
 
 - [CLAUDE.md](CLAUDE.md) — requirements, technical decisions, standards
-- [docs/PLAN.md](docs/PLAN.md) — the ten-part build plan
+- [docs/PLAN.md](docs/PLAN.md) — the ten-part build plan, decisions and progress
+- [docs/DATABASE.md](docs/DATABASE.md) — schema design and its reasoning
+- [docs/academia.md](docs/academia.md) — a walkthrough of each part for a reader new to Docker and backends
 - [backend/CLAUDE.md](backend/CLAUDE.md), [frontend/CLAUDE.md](frontend/CLAUDE.md), [scripts/CLAUDE.md](scripts/CLAUDE.md)

@@ -17,6 +17,8 @@ Notes:
 - `test` bind-mounts the source instead of using the app image, so it picks up edits without a rebuild.
 - `start` bind-mounts `./data` to `/app/data` so the SQLite database outlives the container, and creates
   the directory first because Docker would otherwise create it root-owned.
-- `start`'s health poll allows 120s. It is the script's only early-exit path, so when it is too short the
-  symptom is Playwright reporting "webServer exited early" — which says nothing about the real cause.
-  Do not shorten it.
+- `start`'s health poll allows 120s and is the script's only failure path. Do not shorten it: a machine
+  that has just finished a docker build, or is setting up the ./data bind mount for the first time, can
+  legitimately take longer than a short budget allows.
+- Playwright calls `start.sh` from its `globalSetup`, so these scripts are on the critical path for the
+  end-to-end suite as well as for running the app.
