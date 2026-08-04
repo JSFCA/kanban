@@ -19,9 +19,11 @@ See [../CLAUDE.md](../CLAUDE.md) for requirements and standards, and
 | 7 Frontend reads and writes through the API | Done |
 | 8 AI connectivity | Done |
 | 9 AI over the board | Done |
-| 10 AI sidebar | Not started |
+| 10 AI sidebar | Done |
 
-All merged to main. 70 tests: 36 backend, 22 frontend unit, 12 end to end.
+All merged to main. 85 tests: 37 backend, 33 frontend unit, 15 end to end.
+
+**The plan is complete.** Every part is built, tested and exercised in a browser.
 
 Start the app with `scripts/start.sh` and sign in as `user` / `password`.
 
@@ -74,6 +76,8 @@ Learned while building Parts 2-7. Each one is cheap to honour and expensive to r
 - **The HTTP package is `httpx2` and imports as `httpx2`.** There is no top-level `httpx` in the image.
 - **Live AI tests are intermittently red.** One failure in roughly seven runs of the Part 9 question test.
   Assert with messages naming the offending values, or a rerun is all you learn from a failure.
+- **A 200 from OpenRouter is not necessarily a completion.** Rate limits arrive as an `error` object with a
+  200 status; `ai.extract_message` turns that into an `AIError` rather than a `KeyError`.
 - **Pydantic `$defs` must be hoisted to the tool's `parameters` root.** `#/$defs/Card` resolves against the
   document root, so definitions left nested under a property point at nothing.
 - **`backend/.venv` is bind-mounted and persists between test runs.** It drifted from `uv.lock` and hid a
@@ -302,16 +306,30 @@ the card is in Done after a reload.
 
 **Goal.** A chat sidebar where the AI can talk and change the board, with the board refreshing when it does.
 
-- [ ] Collapsible sidebar in the project palette, alongside the board without overlapping it
-- [ ] Message list distinguishing user and AI turns, with a pending indicator while waiting
-- [ ] Input posts to `/api/ai/chat` with the running conversation history
-- [ ] When `board_updated` is true, update board state from the response so the UI refreshes without a reload
-- [ ] Errors shown in the thread, not swallowed
-- [ ] Conversation history held in component state; it is not persisted in the MVP
+- [x] Collapsible sidebar in the project palette
+- [x] Message list distinguishing user and AI turns, with a pending indicator while waiting
+- [x] Input posts to `/api/ai/chat` with the running conversation history
+- [x] When `board_updated` is true, update board state from the response so the UI refreshes without a reload
+- [x] Errors shown in the thread, not swallowed, and never sent back to the model as history
+- [x] Conversation history held in component state; it is not persisted in the MVP
+- [x] The board locks while a request is in flight, so the user and the AI cannot overwrite each other
 
 **Tests.**
-- Unit (vitest): sidebar opens and closes; a sent message appears and the reply renders; pending state shows while in flight; a `board_updated` response re-renders the board; an API error shows a message in the thread
-- E2E (Playwright): log in, open the sidebar, ask a question, see a reply; ask for a card to move and see the board update without a reload, with the change surviving a refresh
+- Unit (vitest): sidebar opens and closes; a sent message appears and the reply renders; pending state shows while in flight; a `board_updated` response re-renders the board and is not saved back; no callback when nothing changed; the board reports `aria-busy` while waiting; an API error shows in the thread; failed turns are excluded from the history sent
+- E2E (Playwright): open and close with the board still reachable; a question answered with `board_updated` false; a requested move applied without a reload and surviving a refresh
 
 **Success criteria.** All suites pass. In the browser, a real conversation with the AI moves a real card and
 the board updates on its own.
+
+**Result.** In a browser: "Move 'Gather customer signals' to Done and tell me what you did" returned
+"Moved 'Gather customer signals' (card-2) from Backlog to Done", the card left Backlog without a reload, and
+the change survived one.
+
+**Decisions taken during the part.**
+
+- **Overlay, not push.** The sidebar is `fixed` over the right edge; the board keeps its width and never
+  reflows. The accepted cost is that the panel covers the Done column on a laptop.
+- **The board locks while the AI is thinking.** Both writers replace the board wholesale, so a drag during a
+  slow call would otherwise be silently undone. `apply()` refuses edits and the grid shows `aria-busy`.
+- **Errors are a separate turn kind.** They render in the thread but are filtered out of the history sent
+  upstream — assistant history is what the model imitates.

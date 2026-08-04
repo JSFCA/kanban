@@ -5,10 +5,15 @@ import { testBoard } from "@/test/board-fixture";
 import type { BoardData } from "@/lib/kanban";
 
 /** Serves the board on GET and records every PUT payload. */
-const mockBoardApi = (options: { getStatus?: number; putStatus?: number } = {}) => {
+const mockBoardApi = (
+  options: { getStatus?: number; putStatus?: number; chat?: unknown } = {}
+) => {
   const puts: BoardData[] = [];
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";
+    if (url === "/api/ai/chat") {
+      return { ok: true, status: 200, json: async () => options.chat } as Response;
+    }
     if (url === "/api/board" && method === "GET") {
       const status = options.getStatus ?? 200;
       return {
@@ -120,6 +125,73 @@ describe("KanbanBoard", () => {
     await waitFor(() => expect(puts.length).toBeGreaterThan(0), { timeout: 2000 });
     expect(puts).toHaveLength(1);
     expect(puts[0].columns[0].title).toBe("Later");
+  });
+
+  it("re-renders the board when the AI changes it, without a reload", async () => {
+    const renamed = testBoard();
+    renamed.cards["card-1"].title = "Renamed by the AI";
+    mockBoardApi({
+      chat: { reply: "Renamed it.", board_updated: true, board: renamed },
+    });
+    render(<KanbanBoard />);
+    await boardReady();
+
+    await userEvent.click(screen.getByRole("button", { name: /ai assistant/i }));
+    await userEvent.type(screen.getByLabelText(/message the ai/i), "Rename card 1");
+    await userEvent.click(screen.getByRole("button", { name: /^send$/i }));
+
+    expect(await screen.findByText("Renamed by the AI")).toBeInTheDocument();
+    expect(screen.queryByText("Align roadmap themes")).not.toBeInTheDocument();
+  });
+
+  it("does not save the AI's board back to the API", async () => {
+    const renamed = testBoard();
+    renamed.cards["card-1"].title = "Renamed by the AI";
+    const puts = mockBoardApi({
+      chat: { reply: "Renamed it.", board_updated: true, board: renamed },
+    });
+    render(<KanbanBoard />);
+    await boardReady();
+
+    await userEvent.click(screen.getByRole("button", { name: /ai assistant/i }));
+    await userEvent.type(screen.getByLabelText(/message the ai/i), "Rename card 1");
+    await userEvent.click(screen.getByRole("button", { name: /^send$/i }));
+    await screen.findByText("Renamed by the AI");
+
+    expect(puts).toHaveLength(0);
+  });
+
+  it("locks the board while the AI is working", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    mockBoardApi();
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    const passthrough = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === "/api/ai/chat") {
+        await gate;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ reply: "Done.", board_updated: false, board: null }),
+        } as Response;
+      }
+      return passthrough(url, init);
+    });
+
+    render(<KanbanBoard />);
+    await boardReady();
+    await userEvent.click(screen.getByRole("button", { name: /ai assistant/i }));
+    await userEvent.type(screen.getByLabelText(/message the ai/i), "Think a while");
+    await userEvent.click(screen.getByRole("button", { name: /^send$/i }));
+    await screen.findByText(/thinking/i);
+
+    // The column is itself a <section>, so anchor on the attribute instead.
+    const grid = screen.getAllByTestId(/column-/)[0].closest("[aria-busy]");
+    expect(grid).toHaveAttribute("aria-busy", "true");
+
+    release();
+    await waitFor(() => expect(grid).toHaveAttribute("aria-busy", "false"));
   });
 
   it("surfaces an error when saving fails", async () => {

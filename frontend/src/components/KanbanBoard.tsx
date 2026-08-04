@@ -11,8 +11,10 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
+import clsx from "clsx";
 import { KanbanColumn } from "@/components/KanbanColumn";
 import { KanbanCardPreview } from "@/components/KanbanCardPreview";
+import { ChatSidebar } from "@/components/ChatSidebar";
 import {
   createId,
   moveCard,
@@ -34,6 +36,7 @@ export const KanbanBoard = ({ user, onSignOut }: KanbanBoardProps) => {
   const [board, setBoard] = useState<BoardData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
+  const [aiBusy, setAiBusy] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const sensors = useSensors(
@@ -60,6 +63,11 @@ export const KanbanBoard = ({ user, onSignOut }: KanbanBoardProps) => {
    * stores the result.
    */
   const apply = (next: BoardData, delay = 0) => {
+    // The AI is holding the board. Both writers replace it wholesale, so
+    // letting an edit through here would race the reply we are waiting for.
+    if (aiBusy) {
+      return;
+    }
     setBoard(next);
     setError(null);
     if (saveTimer.current) {
@@ -68,6 +76,20 @@ export const KanbanBoard = ({ user, onSignOut }: KanbanBoardProps) => {
     saveTimer.current = setTimeout(() => {
       saveBoard(next).catch((cause: Error) => setError(cause.message));
     }, delay);
+  };
+
+  /**
+   * The AI already persisted this board, so it is adopted rather than saved.
+   * Any debounced rename still in flight is dropped: it holds a pre-AI board
+   * and would write it back over the top.
+   */
+  const handleAiBoard = (next: BoardData) => {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    setBoard(next);
+    setError(null);
   };
 
   const handleDragStart = (event: DragStartEvent) => {
@@ -229,7 +251,15 @@ export const KanbanBoard = ({ user, onSignOut }: KanbanBoardProps) => {
           onDragStart={handleDragStart}
           onDragEnd={handleDragEnd}
         >
-          <section className="grid gap-6 lg:grid-cols-5">
+          <section
+            aria-busy={aiBusy}
+            className={clsx(
+              "grid gap-6 transition-opacity lg:grid-cols-5",
+              // Locked while the AI holds the board, so the two writers cannot
+              // overlap. apply() refuses edits anyway; this makes it visible.
+              aiBusy && "pointer-events-none opacity-60"
+            )}
+          >
             {board.columns.map((column) => (
               <KanbanColumn
                 key={column.id}
@@ -251,6 +281,8 @@ export const KanbanBoard = ({ user, onSignOut }: KanbanBoardProps) => {
           </DragOverlay>
         </DndContext>
       </main>
+
+      <ChatSidebar onBoardUpdate={handleAiBoard} onBusyChange={setAiBusy} />
     </div>
   );
 };
