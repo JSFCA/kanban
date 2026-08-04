@@ -79,6 +79,10 @@ retries. `POST /api/ai/ping` is the Part 8 smoke route; `POST /api/ai/chat` is t
 - **`ai.api_key()` reads the environment per call, not at import.** That is what lets a test monkeypatch a
   bad key and exercise the real failure path through the real route.
 - **`AIError` is the only error type; the route maps it to 502**, not 500 — the upstream failed, not us.
+- **A 200 from OpenRouter does not mean a completion.** Rate limits and some upstream failures come back as
+  an `error` object with a 200 status. `extract_message` rejects a body with no `choices` and puts the body
+  in the message; before it existed this was a `KeyError` and a 500. Hit during Part 10, after a day of
+  live-test runs — the free tier's daily cap is reachable.
 - **AI routes are `async def`**, unlike everything else here. A 30s outbound call would otherwise hold a
   threadpool worker for its whole duration.
 - **The tests call OpenRouter for real. Nothing in `tests/test_ai.py` is mocked**, including the failure

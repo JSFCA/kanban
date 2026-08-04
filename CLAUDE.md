@@ -32,13 +32,13 @@ For the MVP, this will run locally (in a docker container)
 
 ## Current state
 
-Parts 1-9 of docs/PLAN.md are complete and merged to main. The app runs in one container: sign in at
-http://localhost:8000 with `user` / `password`, and the Kanban board persists to SQLite. The backend reaches
-OpenRouter through `POST /api/ai/ping`, and refuses to start without `OPENROUTER_API_KEY`.
-`POST /api/ai/chat` puts the AI over the board: it answers questions and can return a whole new board
-through a forced tool call, validated and persisted server-side.
+**All ten parts of docs/PLAN.md are complete and merged to main.** The app runs in one container: sign in at
+http://localhost:8000 with `user` / `password`, work the Kanban board, and talk to the AI in the sidebar.
+Everything persists to SQLite. The backend refuses to start without `OPENROUTER_API_KEY`.
 
-Remaining: Part 10 (AI chat sidebar) — the only part with no UI yet.
+The AI reads the board and can change it: `POST /api/ai/chat` returns a whole new board through a forced
+tool call, validated server-side, and the sidebar re-renders the board without a reload. The board is
+locked while a request is in flight, because both writers replace it wholesale.
 
 The frontend began as a standalone demo. It is now statically exported and served by FastAPI, with card
 editing, session auth, and all five mutations persisted through the API.

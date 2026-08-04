@@ -61,6 +61,33 @@ export const getBoard = async (): Promise<BoardData> => {
   return response.json();
 };
 
+/** Only the turns the model should see. Failed turns never go back in. */
+export type ChatTurn = { role: "user" | "assistant"; content: string };
+
+export type ChatReply = {
+  reply: string;
+  board_updated: boolean;
+  board: BoardData | null;
+};
+
+export const sendChat = async (
+  message: string,
+  history: ChatTurn[]
+): Promise<ChatReply> => {
+  const response = await request("/api/ai/chat", {
+    method: "POST",
+    body: JSON.stringify({ message, history }),
+  });
+  if (!response.ok) {
+    throw new ApiError(
+      response.status === 502
+        ? "The AI could not answer. Try rephrasing that."
+        : `The AI request failed (${response.status})`
+    );
+  }
+  return response.json();
+};
+
 export const saveBoard = async (board: BoardData): Promise<void> => {
   const response = await request("/api/board", {
     method: "PUT",

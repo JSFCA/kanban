@@ -40,6 +40,14 @@ def test_payload_carries_the_model_and_messages():
     assert payload["messages"] == messages
 
 
+def test_a_200_without_a_completion_is_an_error():
+    """Rate limits arrive as an `error` object with a 200 status, not a 429."""
+    body = {"error": {"message": "Rate limit exceeded", "code": 429}}
+
+    with pytest.raises(ai.AIError, match="no completion"):
+        ai.extract_message(body)
+
+
 def test_ping_answers_two_plus_two(signed_in: TestClient):
     response = signed_in.post("/api/ai/ping")
 

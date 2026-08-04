@@ -54,7 +54,19 @@ async def _post(payload: dict) -> dict:
     if response.status_code != 200:
         raise AIError(f"OpenRouter returned {response.status_code}: {response.text}")
 
-    return response.json()["choices"][0]["message"]
+    return extract_message(response.json())
+
+
+def extract_message(body: dict) -> dict:
+    """
+    A 200 does not guarantee a completion: OpenRouter returns rate limits and
+    some upstream failures as an `error` object with a 200 status. Seen in the
+    wild, as a KeyError and a 500 where a 502 was promised. The body goes into
+    the message because that is the only record of what actually came back.
+    """
+    if not body.get("choices"):
+        raise AIError(f"OpenRouter returned no completion: {body}")
+    return body["choices"][0]["message"]
 
 
 async def complete(messages: list[Message]) -> str:

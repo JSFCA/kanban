@@ -39,10 +39,10 @@ npm run test:e2e    # end to end, playwright
 npm run test:all    # both
 ```
 
-70 tests in total: 36 backend, 22 frontend unit, 12 end to end.
+85 tests in total: 37 backend, 33 frontend unit, 15 end to end.
 
 The end-to-end suite starts the container itself and runs serially, because the board is persisted and the
-tests share it. Run `scripts/stop.sh` first if you want a guaranteed-fresh build.
+tests share it. Three of its tests make real OpenRouter calls, so it needs network and takes about 40s. Run `scripts/stop.sh` first if you want a guaranteed-fresh build.
 
 If `npm ci` fails with `EACCES` in `~/.npm/_cacache`, a past `sudo npm` left root-owned files in the
 cache. Fix with `sudo chown -R $(whoami) ~/.npm`, or bypass it with `npm ci --cache /tmp/npm-cache`.

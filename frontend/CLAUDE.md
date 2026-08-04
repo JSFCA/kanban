@@ -1,8 +1,7 @@
 # Frontend
 
-The Kanban board UI. Statically exported and served by FastAPI at `/`. All state is still in React —
-nothing is persisted and there is no auth yet. Parts 4, 7 and 10 of [../docs/PLAN.md](../docs/PLAN.md)
-change that.
+The Kanban board UI and the AI chat sidebar. Statically exported and served by FastAPI at `/`. The board is
+loaded from and saved through the API, the session gates it, and the AI can change it.
 
 ## Stack
 
@@ -17,10 +16,11 @@ change that.
 ```
 src/app/          layout.tsx (fonts, metadata), page.tsx (renders AuthGate), globals.css
 src/components/   AuthGate, LoginForm, KanbanBoard, KanbanColumn, KanbanCard,
-                  KanbanCardPreview, NewCardForm
-src/lib/kanban.ts types, seed data, moveCard(), updateCard(), createId()
-src/lib/api.ts    typed calls to /api: fetchMe, login, logout
-src/test/setup.ts imports @testing-library/jest-dom
+                  KanbanCardPreview, NewCardForm, ChatSidebar
+src/lib/kanban.ts types, moveCard(), updateCard(), createId()
+src/lib/api.ts    typed calls to /api: fetchMe, login, logout, getBoard, saveBoard, sendChat
+src/test/setup.ts jest-dom, plus a scrollIntoView stub (jsdom has no layout, and the
+                  chat thread scrolls itself on every new turn)
 tests/            Playwright specs
 ```
 
@@ -99,6 +99,27 @@ listeners are therefore withheld while `editing` is set, otherwise dnd-kit swall
 fields cannot be focused or selected. jsdom cannot detect this; the Playwright test asserts `toBeFocused()`
 after the click, which is what actually guards it.
 
+## AI sidebar
+
+[src/components/ChatSidebar.tsx](src/components/ChatSidebar.tsx) owns the conversation; `KanbanBoard`
+renders it and reacts through two callbacks.
+
+- **It is an overlay, not a push panel.** `fixed` to the right edge, 400px, `z-40`. The board keeps its full
+  width and never reflows when the panel opens. The accepted cost is that the panel covers the Done column
+  on a laptop — the column the AI is most often asked to change.
+- **`onBoardUpdate` fires only when `board_updated` is true.** `handleAiBoard` adopts the board without
+  saving it: the backend already persisted it, and a `PUT` here would be a pointless round trip.
+- **`onBusyChange` locks the board while a request is in flight.** `apply()` refuses edits when `aiBusy`,
+  and the grid gets `aria-busy` plus `pointer-events-none opacity-60` so the lock is visible. The two
+  writers both replace the board wholesale, so overlapping them loses one of the writes.
+- **`handleAiBoard` clears any pending debounced save.** A column rename started just before the request
+  holds a pre-AI board and would write it back over the top when its timer fires.
+- **Errors are a third turn kind and never go back to the model.** The history sent to `/api/ai/chat` is
+  filtered to `user` and `assistant` turns. Feeding "The AI could not answer" back as assistant history
+  teaches it to imitate the error.
+- History lives in component state only. Reloading the page clears the conversation; the board persists,
+  the chat does not.
+
 ## Drag and drop
 
 `DndContext` with `closestCorners`, a `DragOverlay` rendering `KanbanCardPreview`, and a `PointerSensor`
@@ -127,7 +148,8 @@ so the Docker build stage needs network access.
 
 Stable selectors for tests: `data-testid="column-<columnId>"`, `data-testid="card-<cardId>"`,
 `aria-label="Column title"`, `aria-label="Card title"`, `aria-label="Card details"`,
-`aria-label="Delete <card title>"`.
+`aria-label="Delete <card title>"`, `aria-label="Message the AI"`,
+`aria-label="Close the AI assistant"`, and the "AI assistant" launcher button.
 
 Gotchas when writing selectors:
 
@@ -141,6 +163,10 @@ Gotchas when writing selectors:
   `exact: true`.
 - The delete button's accessible name is its `aria-label` (`Delete <title>`), not its visible text
   ("Remove"). `aria-label` wins over content.
+- `KanbanColumn` renders its own `<section>`, so `closest("section")` from a column matches the column
+  itself, not the grid around it. Anchor on `closest("[aria-busy]")` when you want the grid.
+- The sidebar's close button is named "Close the AI assistant", which a `/ai assistant/i` regex also
+  matches. Only one of the launcher and the panel is mounted at a time, so they never collide.
 
 ## Tests
 
@@ -174,6 +200,9 @@ Node.js ships to production, and `out/` is gitignored — the build output never
 
 ## Known gaps
 
-- No AI sidebar (Part 10)
-- Saving is last-write-wins: the whole board is replaced on every change, so a concurrent edit silently
-  overwrites. Part 10 makes that reachable, since the AI and the user can both change the board
+- Saving is last-write-wins: the whole board is replaced on every change. Between the user and the AI this
+  is handled by locking the board while a request is in flight, but two browser tabs would still overwrite
+  each other
+- The e2e suite makes real OpenRouter calls in `tests/chat.spec.ts`, so it needs network and quota and can
+  fail for reasons unrelated to the code. It went from roughly 8s to roughly 40s
+- The conversation is not persisted; a reload starts a new thread

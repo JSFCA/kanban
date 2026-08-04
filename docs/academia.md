@@ -1207,3 +1207,150 @@ conclusion, and the "bug" evaporated. Shared mutable state — one database, use
 The last part, and the first one in a while with anything to look at. The chat moves into a sidebar in the
 browser: a message thread, a pending indicator while the model thinks, and a board that re-renders itself
 when `board_updated` comes back true — no reload.
+
+---
+
+## Part 10: the sidebar
+
+### Two writers, one board
+
+Every earlier part had exactly one thing changing the board: the user. Part 10 adds a second, and the two
+do not coordinate.
+
+The problem is not hypothetical. Saving replaces the **whole** board — that was the deal struck back in
+Part 6, when the board became one JSON document. So while a chat request is in flight, which can take tens
+of seconds, the model is working from a snapshot taken when you pressed Send. Drag a card during that
+window and the reply arrives holding a board that never knew about your drag. Applying it silently undoes
+your work.
+
+Three ways to handle it:
+
+- **Let the AI win and document it.** Honest, matches the app's existing last-write-wins behaviour, costs
+  nothing to build, and occasionally eats an edit.
+- **Merge the two boards.** Correct, and far more machinery than an MVP justifies — you need to know what
+  changed, not just what the board looks like now.
+- **Stop the two writers overlapping at all.** Lock the board while a request is in flight.
+
+The third was chosen. While `aiBusy` is set, `apply()` refuses edits and the grid renders with `aria-busy`,
+dimmed and non-interactive. The window is small, the rule is easy to state, and nothing is silently lost.
+
+This is worth noticing as a pattern: concurrency bugs are usually cheaper to *prevent structurally* than to
+resolve after the fact. Making the overlap impossible took one boolean; merging two divergent boards would
+have been a project.
+
+### The debounce that outlives the lock
+
+The lock has a hole, and it is the kind that only shows up when you go looking.
+
+Column renames are debounced by 400ms — a burst of keystrokes collapses into one save. Suppose a rename
+starts at t=0 and a chat request at t=100ms. The lock stops *new* edits, but the rename's timer is already
+running. At t=400ms it fires and saves a pre-AI board.
+
+So `handleAiBoard` clears any pending timer before adopting the AI's board. One line, and it closes a
+window that would otherwise produce a board that looks right on screen and is wrong in the database.
+
+### Adopting a board rather than saving it
+
+When the AI's board arrives, the frontend calls `setBoard` and stops. It does **not** save.
+
+That looks like an omission and is not. The backend already wrote the board before replying — that is what
+`board_updated: true` means. A `PUT` here would send the same document back for no reason, and give the
+race one more chance to matter. There is a test asserting no `PUT` happens, because "we deliberately do not
+save here" is exactly the kind of intention a future edit erases by accident.
+
+### Errors belong in the thread, not in the history
+
+Failed turns render in the conversation, as the plan asked. What the plan did not say is what happens to
+them afterwards.
+
+The history sent to `/api/ai/chat` is filtered to `user` and `assistant` turns. An error is neither. If
+"The AI could not answer. Try rephrasing that." were sent back as an assistant turn, the model would read
+it as an example of how it talks — and models are excellent imitators of their own apparent past. The
+user's failed message *does* stay in the history, because they did say it.
+
+Small distinction, and the sort of thing that produces baffling behaviour three turns later if you get it
+wrong.
+
+### jsdom has no layout
+
+The chat scrolls to the newest message with `scrollIntoView`. Every unit test promptly failed:
+
+```
+TypeError: threadEnd.current?.scrollIntoView is not a function
+```
+
+jsdom implements the DOM but not layout. It has no viewport, nothing has a position or a size, and so
+methods about *where things are* mostly do not exist. This is the same reason drag and drop cannot be unit
+tested here and lives in Playwright instead.
+
+The fix went in `src/test/setup.ts`, not the component. A component should not carry a workaround for the
+environment its tests run in — that is the test environment's problem to declare.
+
+### One more lesson in accessible names
+
+A test asserted the grid was `aria-busy` and found nothing:
+
+```ts
+screen.getAllByTestId(/column-/)[0].closest("section")
+```
+
+`closest()` starts at the element itself, and `KanbanColumn` renders its own `<section>`. The locator found
+the column and asked it whether it was busy. Anchoring on `closest("[aria-busy]")` — the attribute actually
+being looked for — fixed it.
+
+This is the fourth locator bug in this project, after the three in Parts 3, 4 and 7. They share a shape:
+a selector that *describes* the target loosely enough to match something else nearby. Prefer selectors that
+name the thing you actually care about.
+
+### The suite finally caught a real bug
+
+Running everything together, the backend suite failed:
+
+```
+return response.json()["choices"][0]["message"]
+KeyError: 'choices'
+```
+
+A **200 response with no completion in it**. OpenRouter returns rate limits and some upstream failures as an
+`error` object with a 200 status, rather than a 429. The code checked the status code and assumed the rest.
+
+Part 8 promised that upstream failures surface as a clean 502. This one surfaced as a `KeyError` and a 500
+with a stack trace — the exact outcome that part set out to prevent, sitting undiscovered because a happy
+path had never been unhappy in quite that way.
+
+The lesson is not "add more error handling". It is that **a status code is not a contract**. Two hundred
+means the HTTP request succeeded, not that the thing you asked for happened.
+
+It also arrived at a telling moment: after a day of live tests, having spent a lot of free-tier quota. The
+test suite ran into the limit that the tests themselves created.
+
+### Final test counts
+
+```
+37  backend            pytest      (2 call OpenRouter for real)
+33  frontend unit      vitest
+15  end to end         playwright  (3 call OpenRouter for real)
+```
+
+85 tests. The end-to-end suite grew from about 8 seconds to about 40, almost entirely waiting for a model.
+
+### What was built
+
+Ten parts, in order, each one merged only after its tests passed and someone used it in a browser:
+
+1. A plan
+2. A container serving a hello-world page
+3. The real board, statically exported and served by FastAPI
+4. Sign in, with the API as the security boundary
+5. A database schema, agreed before any code was written
+6. The board persisted in SQLite
+7. The frontend reading and writing through the API
+8. The backend reaching OpenRouter
+9. The AI reading and changing the board through a forced tool call
+10. A sidebar to talk to it
+
+The through-line, if there is one: each part could be tested before the next was started, and each new
+capability was added behind something that already worked. Part 9 could trust `BoardData` because Part 6
+built it. Part 10 could trust `board_updated` because Part 9 made it mean something. None of that is
+specific to Kanban boards or AI — it is just what it looks like to build something one honest step at a
+time.
