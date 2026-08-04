@@ -7,7 +7,7 @@ the app only ever runs inside the container.
 
 ```
 app/main.py       create_app factory: routes, static mount, lifespan
-app/ai.py         OpenRouter client: no FastAPI, no retries
+app/ai.py         OpenRouter client, prompt and tool schema: no FastAPI, no DB, no retries
 app/db.py         connection helper, schema, load_board / save_board
 app/models.py     Card, Column, BoardData with their invariant
 app/seed.py       the demo board a new user starts with
@@ -71,7 +71,7 @@ SQLite at `/app/data/kanban.db`, bind-mounted from `./data` on the host. Design 
 ## AI
 
 `app/ai.py` wraps one OpenRouter endpoint. Model `nvidia/nemotron-3-ultra-550b-a55b:free`, 30s timeout, no
-retries. `POST /api/ai/ping` is the Part 8 smoke route.
+retries. `POST /api/ai/ping` is the Part 8 smoke route; `POST /api/ai/chat` is the board conversation.
 
 - **The app refuses to start without `OPENROUTER_API_KEY`.** The check is in the lifespan, next to
   `initialise`, so importing the module still touches nothing. `start.sh` and `test.sh` both pass the
@@ -86,6 +86,25 @@ retries. `POST /api/ai/ping` is the Part 8 smoke route.
   free-tier quota; `:free` is rate-limited per minute and per day, so a long debugging session can exhaust
   the day's allowance and fail the suite for reasons unrelated to the code.
 - The timeout path is untested on purpose — forcing it needs a mock. Say so, do not hide it.
+
+### The board conversation (Part 9)
+
+This model has no `response_format`, so the reply gets its schema from a **forced tool call**: one tool,
+`respond`, with `tool_choice` naming it.
+
+- **`RESPOND_TOOL` is generated from `BoardData.model_json_schema()`**, so it cannot drift from the models.
+  Pydantic's `$defs` are **hoisted to the `parameters` root** — `#/$defs/Card` resolves against the document
+  root, and definitions left nested under the `board` property point at nothing.
+- **`apply_tool_call` in `app/main.py` is the only thing that writes an AI board.** It validates against
+  `BoardData`, and a failure raises `AIError`, which the route maps to **502** with nothing written. A
+  rejected update must never be mistakable for a successful one.
+- **`board_updated` means the board actually changed.** The model sometimes echoes the board back unchanged
+  when answering a question; that is not an update, and Part 10 re-renders whenever the flag is true.
+- **History is capped at `ai.HISTORY_LIMIT` (20) turns**, oldest dropped first.
+- **The live tests are intermittently red** — one failure in roughly seven runs of the question test. Give
+  live assertions messages that name the offending values, or a failure teaches you nothing but "rerun it".
+- The rejection path is tested by calling `apply_tool_call` directly with a malformed board. The model
+  cannot be made to produce one on demand, and that is our code under test, not a mock of theirs.
 
 ## Running
 

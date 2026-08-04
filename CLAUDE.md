@@ -32,11 +32,13 @@ For the MVP, this will run locally (in a docker container)
 
 ## Current state
 
-Parts 1-8 of docs/PLAN.md are complete and merged to main. The app runs in one container: sign in at
+Parts 1-9 of docs/PLAN.md are complete and merged to main. The app runs in one container: sign in at
 http://localhost:8000 with `user` / `password`, and the Kanban board persists to SQLite. The backend reaches
 OpenRouter through `POST /api/ai/ping`, and refuses to start without `OPENROUTER_API_KEY`.
+`POST /api/ai/chat` puts the AI over the board: it answers questions and can return a whole new board
+through a forced tool call, validated and persisted server-side.
 
-Remaining: Part 9 (AI over the board via a forced tool call), Part 10 (AI chat sidebar).
+Remaining: Part 10 (AI chat sidebar) — the only part with no UI yet.
 
 The frontend began as a standalone demo. It is now statically exported and served by FastAPI, with card
 editing, session auth, and all five mutations persisted through the API.

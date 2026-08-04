@@ -1061,3 +1061,149 @@ without the mocking this part rejected, so the gap is written down rather than p
 The AI gets to see the board. That needs the model to return something structured enough to save, which
 this model cannot do through the usual `response_format` mechanism — so Part 9 uses a forced tool call
 instead, and leans on the `BoardData` validation built back in Part 6 to reject anything malformed.
+
+---
+
+## Part 9: letting the model change the board
+
+### The problem with asking a model for JSON
+
+Part 8 asked for a sentence and got one. Part 9 needs something much less forgiving: a complete board
+document that the database will accept. "Reply with JSON" is not enough. Models are happy to wrap JSON in
+prose, use a slightly different field name, or trail off mid-object.
+
+The usual fix is **structured outputs** — you hand the provider a JSON Schema and it constrains generation
+so the reply must match. This model does not support that. Its `supported_parameters` list, checked against
+OpenRouter's live model list back in Part 1, includes `tools` and `tool_choice` but not `response_format`.
+
+### Tool calling as a schema in disguise
+
+Tool calling was designed for a different job: letting a model invoke your functions. You describe a
+function and its parameters, the model replies with arguments instead of prose, and your code runs it.
+
+The trick is that **the parameter description is a JSON Schema**, and `tool_choice` can force the model to
+use a specific tool. Define one tool whose parameters happen to be the shape you wanted, force it, and
+never actually "call" anything — you just read the arguments:
+
+```python
+"parameters": {
+    "type": "object",
+    "properties": {
+        "reply": {"type": "string"},
+        "board": {...the BoardData schema...},
+    },
+    "required": ["reply"],
+}
+```
+
+`reply` is required, `board` is not. That optionality is the whole design: it is how the model says "this
+was a question, I changed nothing" versus "here is the new board."
+
+### A schema that writes itself
+
+The board schema is not hand-written. Pydantic generates it from the models built in Part 6:
+
+```python
+BoardData.model_json_schema()
+```
+
+A hand-written copy would be a second definition of the board, free to drift from the first the moment
+anyone touches `models.py`. Generating it means there is only ever one.
+
+That came with a subtlety worth knowing. Pydantic does not inline nested models; it emits them under a
+`$defs` section and points at them with references like `#/$defs/Card`. The `#` means **the root of the
+document** — so if the definitions stay nested under the `board` property, every reference points at
+nothing. They have to be hoisted up to the top of `parameters`, where `#/$defs/Card` actually resolves.
+
+### Telling the model the rules
+
+The system prompt carries the current board and a short list of rules. The one that matters most:
+
+```
+Send the whole board, not a fragment. Anything you leave out is deleted.
+```
+
+The board is replaced wholesale, so a model that returns only the column it changed would silently destroy
+the other four. Saying so plainly in the prompt is cheaper than building a merge algorithm — and the
+validation behind it means a mistake is rejected rather than saved.
+
+### Never trust the model's output
+
+Everything the model returns goes through `BoardData` before it goes anywhere near the database:
+
+```python
+try:
+    validated = BoardData.model_validate(board)
+except ValidationError as error:
+    raise ai.AIError(f"The model returned an invalid board: {error}")
+```
+
+This is where the invariant written in Part 6 earns its keep. `BoardData` rejects a board whose `cardIds`
+name a card that does not exist — exactly the mistake a model makes when it moves a card by adding an id in
+one place and forgetting to remove it in another. The database cannot express that rule, so the model layer
+does, and it now guards two doors: the `PUT /api/board` route and the AI.
+
+A rejected board becomes a **502**, with nothing written. The alternative — returning the model's cheerful
+"Done!" while silently discarding the update — would mean the one situation the user most needs to know
+about is the one they are told nothing about.
+
+### `board_updated` has to be true
+
+The response is `{reply, board_updated, board}`, and Part 10 will re-render the board whenever
+`board_updated` is true.
+
+Asked a plain question, the model *usually* omits the board. Occasionally it echoes it back unchanged. Both
+are reasonable behaviour; treating the second as an update would not be. So the route compares what came
+back against what is stored and only counts it as an update if something actually differs. A flag that says
+"changed" should never mean "possibly changed".
+
+### Tests against something that changes its mind
+
+Part 8 established that these tests call OpenRouter for real. Part 9 is where the cost of that shows up,
+because the model is not a deterministic function.
+
+The tests split into two groups. Anything that is **our** behaviour is tested as a pure function with no
+network at all: does the prompt contain the board, does history truncate at twenty turns, do the schema's
+references resolve, is a malformed board rejected without touching the database. That last one cannot be
+live — there is no way to make a model produce broken output on demand — so the validation is handed a bad
+board directly. That is still testing our code rather than a mock of theirs.
+
+Only two tests are live: a question must leave the board alone, and a specific card must actually move. The
+second is deliberately strict — it names the card and demands it land in Done — with a single retry, on the
+grounds that a model which needs three attempts to follow a simple instruction is information, not noise.
+
+Over about seven runs, one failed. Not the mutation test: the question test. The output had been piped
+through `tail`, so all that survived was `assert...` and the cause was lost — the same mistake CLAUDE.md
+already warns about. The fix was to give every live assertion a message naming the values involved, so the
+next failure explains itself instead of merely announcing itself.
+
+An intermittently red suite is the honest price of testing a real model. The alternative is a suite that is
+always green and proves less.
+
+### A false alarm worth recording
+
+During browser testing the model replied that the board held three cards and named them — but the demo
+board has eight. It looked like the model had truncated the board and the code had cheerfully persisted the
+loss.
+
+It had not. The end-to-end suite resets the board to a three-card fixture before each test, and it had run
+minutes earlier. The model had read the real board correctly, added the requested card, and accurately
+declined to move a card that genuinely was not there.
+
+The lesson is about debugging, not about models: the board was checked directly in SQLite before drawing any
+conclusion, and the "bug" evaporated. Shared mutable state — one database, used by the e2e suite and by hand
+— makes surprising states normal. Look at the data before believing the story.
+
+### Test counts after Part 9
+
+```
+36  backend            pytest      (2 of them call OpenRouter for real)
+22  frontend unit      vitest
+12  end to end         playwright
+```
+
+### What Part 10 changes
+
+The last part, and the first one in a while with anything to look at. The chat moves into a sidebar in the
+browser: a message thread, a pending indicator while the model thinks, and a board that re-renders itself
+when `board_updated` comes back true — no reload.
