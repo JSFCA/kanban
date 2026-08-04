@@ -204,5 +204,7 @@ Node.js ships to production, and `out/` is gitignored — the build output never
   is handled by locking the board while a request is in flight, but two browser tabs would still overwrite
   each other
 - The e2e suite makes real OpenRouter calls in `tests/chat.spec.ts`, so it needs network and quota and can
-  fail for reasons unrelated to the code. It went from roughly 8s to roughly 40s
+  fail for reasons unrelated to the code. It went from roughly 8s to roughly 40s. Observed once: an
+  intermittent 502 on the move test. The `ask()` helper now fails with the server's `detail` in the
+  message — **never assert a bare status here**, or a rerun is all a failure tells you
 - The conversation is not persisted; a reload starts a new thread

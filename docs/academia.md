@@ -1324,6 +1324,22 @@ means the HTTP request succeeded, not that the thing you asked for happened.
 It also arrived at a telling moment: after a day of live tests, having spent a lot of free-tier quota. The
 test suite ran into the limit that the tests themselves created.
 
+### The same lesson, twice in one day
+
+Minutes later the end-to-end suite failed too — an intermittent 502 from the chat route. The test said:
+
+```ts
+expect(response.status()).toBe(200);
+```
+
+Which reports that the status was not 200, and nothing else. The server had explained itself perfectly well
+in the response body, and the assertion threw that explanation away before anyone could read it.
+
+This is the identical mistake to piping test output through `tail` in Part 9, in a different costume:
+**discarding the diagnosis at the moment of failure**. With a flaky dependency it is expensive, because the
+failure may not come back for another twenty runs. The helper now fails with the server's own message
+attached.
+
 ### Final test counts
 
 ```

@@ -15,6 +15,11 @@ const openSidebar = async (page: import("@playwright/test").Page) => {
   await expect(page.getByLabel("Message the AI")).toBeVisible();
 };
 
+/**
+ * Sends a message and returns the parsed reply, failing with the server's own
+ * explanation when the call did not succeed. A bare status assertion throws that
+ * detail away, and an intermittent 502 then teaches you nothing but "rerun it".
+ */
 const ask = async (page: import("@playwright/test").Page, message: string) => {
   const answered = page.waitForResponse(
     (response) => response.url().includes("/api/ai/chat"),
@@ -22,7 +27,14 @@ const ask = async (page: import("@playwright/test").Page, message: string) => {
   );
   await page.getByLabel("Message the AI").fill(message);
   await page.getByRole("button", { name: "Send", exact: true }).click();
-  return answered;
+
+  const response = await answered;
+  const body = await response.json();
+  expect(
+    response.status(),
+    `/api/ai/chat failed: ${JSON.stringify(body)}`
+  ).toBe(200);
+  return body;
 };
 
 test.describe("AI sidebar", () => {
@@ -40,9 +52,8 @@ test.describe("AI sidebar", () => {
     await openFreshBoard(page);
     await openSidebar(page);
 
-    const response = await ask(page, "How many cards are on the board? Answer with the number.");
-    expect(response.status()).toBe(200);
-    expect((await response.json()).board_updated).toBe(false);
+    const body = await ask(page, "How many cards are on the board? Answer with the number.");
+    expect(body.board_updated, `a question changed the board: ${body.reply}`).toBe(false);
 
     // The user's turn and a reply, so two message bubbles in the thread.
     await expect(page.getByText("Thinking")).toBeHidden({ timeout: AI_TIMEOUT });
@@ -56,12 +67,10 @@ test.describe("AI sidebar", () => {
     );
     await openSidebar(page);
 
-    const response = await ask(
+    const body = await ask(
       page,
       "Move the card titled 'Prototype analytics view' to the Done column."
     );
-    expect(response.status()).toBe(200);
-    const body = await response.json();
     expect(body.board_updated, `the model declined to change the board: ${body.reply}`).toBe(
       true
     );
