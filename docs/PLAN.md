@@ -18,10 +18,10 @@ See [../CLAUDE.md](../CLAUDE.md) for requirements and standards, and
 | 6 Board persisted in SQLite | Done |
 | 7 Frontend reads and writes through the API | Done |
 | 8 AI connectivity | Done |
-| 9 AI over the board | Not started |
+| 9 AI over the board | Done |
 | 10 AI sidebar | Not started |
 
-All merged to main. 62 tests: 28 backend, 22 frontend unit, 12 end to end.
+All merged to main. 70 tests: 36 backend, 22 frontend unit, 12 end to end.
 
 Start the app with `scripts/start.sh` and sign in as `user` / `password`.
 
@@ -72,6 +72,10 @@ Learned while building Parts 2-7. Each one is cheap to honour and expensive to r
   depends on this to reject bad AI output.
 - **Query boards with `ORDER BY id LIMIT 1`.** The schema deliberately allows more than one per user.
 - **The HTTP package is `httpx2` and imports as `httpx2`.** There is no top-level `httpx` in the image.
+- **Live AI tests are intermittently red.** One failure in roughly seven runs of the Part 9 question test.
+  Assert with messages naming the offending values, or a rerun is all you learn from a failure.
+- **Pydantic `$defs` must be hoisted to the tool's `parameters` root.** `#/$defs/Card` resolves against the
+  document root, so definitions left nested under a property point at nothing.
 - **`backend/.venv` is bind-mounted and persists between test runs.** It drifted from `uv.lock` and hid a
   broken import for a whole test run. Delete it when the container and the tests disagree.
 - **Playwright uses `globalSetup`, not `webServer`.** `webServer` expects a long-lived foreground process
@@ -261,22 +265,36 @@ A round trip takes about 1.3s.
 
 **Goal.** The AI sees the board and the conversation, replies to the user, and may return a board update.
 
-- [ ] `POST /api/ai/chat` taking the user's message and conversation history
-- [ ] Prompt assembles: system instructions, the current board JSON from the DB, history, and the new message
-- [ ] Define one tool, e.g. `respond`, whose parameters are `{ reply: string, board?: BoardData }`, and set `tool_choice` to force it
-- [ ] Parse the tool call; validate `board` against the Pydantic models and reject anything malformed
-- [ ] If a valid board comes back, persist it and tell the caller the board changed
-- [ ] Response shape: `{ reply, board_updated: bool, board: BoardData | null }`
-- [ ] Cap history length so the prompt cannot grow without bound
+- [x] `POST /api/ai/chat` taking the user's message and conversation history
+- [x] Prompt assembles: system instructions, the current board JSON from the DB, history, and the new message
+- [x] Define one tool, `respond`, whose parameters are `{ reply: string, board?: BoardData }`, and set `tool_choice` to force it
+- [x] Parse the tool call; validate `board` against the Pydantic models and reject anything malformed
+- [x] If a valid board comes back, persist it and tell the caller the board changed
+- [x] Response shape: `{ reply, board_updated: bool, board: BoardData | null }`
+- [x] Cap history length so the prompt cannot grow without bound (`ai.HISTORY_LIMIT`, 20 turns)
+- [x] An echoed, unchanged board is not reported as an update
 
-**Tests.** pytest with the OpenRouter call mocked: a reply-only tool call leaves the DB untouched; a tool
-call with a board persists it and sets `board_updated`; an invalid board is rejected with the DB unchanged
-and an error returned; the prompt contains the current board JSON and the supplied history; history is
-truncated at the cap; the route needs auth. Plus one live call — "move card X to Done" — confirming a real
-board update.
+**Tests.** No mocking, as in Part 8. Pure functions where the behaviour is ours: the prompt carries the
+board and history, history truncates at the cap, the tool schema's `$defs` resolve, a malformed board raises
+and leaves the DB untouched, an echoed board is not an update. Live: a question leaves the board alone; a
+"move card X to Done" request produces a persisted move, asserted strictly with one retry. The route needs
+auth.
 
-**Success criteria.** Mocked tests pass, and a live request that asks for a board change produces a valid,
-persisted update.
+**Success criteria.** All 36 backend tests pass, and a real request moves a real card, persisted across a
+reload.
+
+**Result.** In a browser: "How many cards are on the board in total?" returns a correct count with
+`board_updated: false`; "Move the card 'Gather customer signals' to Done" returns `board_updated: true` and
+the card is in Done after a reload.
+
+**Decisions taken during the part.**
+
+- A board that fails validation is a **502**, not a silent no-op or a fourth response field. It reuses the
+  Part 8 error path, keeps the documented three-field shape, and makes a rejected update impossible to
+  mistake for a successful one.
+- The tool schema is generated from `BoardData.model_json_schema()` so it cannot drift from the models.
+- `board_updated` means the board actually changed. The model occasionally echoes an unchanged board back;
+  writing that would be harmless, but the flag would be a lie and Part 10 re-renders whenever it is true.
 
 ---
 

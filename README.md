@@ -39,7 +39,7 @@ npm run test:e2e    # end to end, playwright
 npm run test:all    # both
 ```
 
-62 tests in total: 28 backend, 22 frontend unit, 12 end to end.
+70 tests in total: 36 backend, 22 frontend unit, 12 end to end.
 
 The end-to-end suite starts the container itself and runs serially, because the board is persisted and the
 tests share it. Run `scripts/stop.sh` first if you want a guaranteed-fresh build.

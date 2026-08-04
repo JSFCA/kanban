@@ -4,7 +4,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from starlette.middleware.sessions import SessionMiddleware
 
 from app import ai
@@ -28,6 +28,46 @@ class Credentials(BaseModel):
 
 class User(BaseModel):
     username: str
+
+
+class ChatRequest(BaseModel):
+    message: str
+    history: list[ai.Message] = []
+
+
+class ChatResponse(BaseModel):
+    reply: str
+    board_updated: bool
+    board: BoardData | None = None
+
+
+def apply_tool_call(db_path: Path, username: str, arguments: dict) -> ChatResponse:
+    """
+    Validate what the model sent back and persist it if it holds up.
+
+    Raises AIError on a malformed board, leaving the stored board untouched. A
+    rejected update must never look like a successful one.
+    """
+    unchanged = ChatResponse(reply=arguments.get("reply", ""), board_updated=False)
+    board = arguments.get("board")
+    if board is None:
+        return unchanged
+
+    try:
+        validated = BoardData.model_validate(board)
+    except ValidationError as error:
+        raise ai.AIError(f"The model returned an invalid board: {error}") from error
+
+    # Asked a question, the model sometimes echoes the board back untouched.
+    # Writing that would be harmless but `board_updated` would be a lie, and
+    # Part 10 re-renders the board whenever it is true.
+    if validated == load_board(db_path, username):
+        return unchanged
+
+    save_board(db_path, username, validated)
+    return ChatResponse(
+        reply=arguments.get("reply", ""), board_updated=True, board=validated
+    )
 
 
 def require_user(request: Request) -> User:
@@ -102,6 +142,20 @@ def create_app(
         except ai.AIError as error:
             raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(error))
         return {"reply": reply}
+
+    @app.post("/api/ai/chat")
+    async def ai_chat(
+        request: ChatRequest, user: User = Depends(require_user)
+    ) -> ChatResponse:
+        board = load_board(db_path, user.username)
+        messages = ai.build_messages(board, request.history, request.message)
+        try:
+            arguments = await ai.call_respond(messages)
+            return apply_tool_call(db_path, user.username, arguments)
+        except ai.AIError as error:
+            # Covers both a failed call and a board we refused to save. Either
+            # way nothing was written, and the caller is told plainly.
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(error))
 
     # Mounted last so API routes take precedence. check_dir is off because the
     # build output only exists inside the image, not in a host checkout.
